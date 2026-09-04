@@ -50,18 +50,15 @@ HISTORY_MAX_POINTS = int(os.environ.get("HISTORY_MAX_POINTS", "288"))
 
 # Notifications Telegram (optionnel) — envoyées quand TELEGRAM_BOT_TOKEN et
 # TELEGRAM_CHAT_ID sont configurés. Couvre : recherche terminée, fusée/
-# satellite lancé (détectés via RCON) + tout événement "notable" reçu par
-# MQTT (join/leave déjà présents, et mort de joueur/attaque de biters si le
-# hook optionnel côté scénario est ajouté — voir scenario-hooks.lua).
+# satellite lancé (détectés via RCON) et join/leave (reçus via MQTT).
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
-NOTIFY_MQTT_TYPES = {"join", "leave", "death", "biter_attack"}
+NOTIFY_MQTT_TYPES = {"join", "leave"}
 
 # Alertes proactives publiées sur MQTT (topic factorio/alerts/...) pour
 # être consommées par une automatisation Home Assistant (notif mobile,
-# etc.). Publiées sur le même broker que le chat. Le principe : la mort
-# d'un joueur est retransmise ; l'électricité est surveillée avec un
-# cooldown pour éviter le spam d'alertes répétées.
+# etc.). Publiées sur le même broker que le chat. Surveillance du déficit
+# électrique avec un cooldown pour éviter le spam d'alertes répétées.
 MQTT_ALERT_PREFIX = os.environ.get("MQTT_ALERT_PREFIX", "factorio/alerts")
 ELECTRICITY_ALERT_MARGIN_PCT = float(os.environ.get("ELECTRICITY_ALERT_MARGIN_PCT", "100"))
 ELECTRICITY_ALERT_COOLDOWN = int(os.environ.get("ELECTRICITY_ALERT_COOLDOWN", "300"))
@@ -283,15 +280,9 @@ def _on_mqtt_message(client, userdata, msg):
 
     msg_type = payload.get("type")
     if msg_type in NOTIFY_MQTT_TYPES:
-        icons = {"join": "🟢", "leave": "🔴", "death": "💀", "biter_attack": "⚠️"}
+        icons = {"join": "🟢", "leave": "🔴"}
         icon = icons.get(msg_type, "ℹ️")
         send_telegram(f"{icon} {payload.get('message', '')}")
-
-    # Forward vers Home Assistant (topic dédié aux alertes) — la mort d'un
-    # joueur est le cas d'usage le plus courant pour déclencher une notif
-    # mobile via une automatisation HA.
-    if msg_type == "death":
-        publish_mqtt_alert("death", payload)
 
 
 def start_mqtt_subscriber():

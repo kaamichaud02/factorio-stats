@@ -123,29 +123,20 @@ RCON déjà configuré).
    projet `factorio-stats` (sur le serveur Docker/Arcane), redéploie le
    poller.
 
-**Mort de joueur et attaque de biters** nécessitent en plus un hook dans
-le `control.lua` de ton scénario — voir `scenario-hooks.lua` à la racine
-du repo pour le code à fusionner (attention : ne pas écraser tes handlers
-`on_event` existants s'il y en a déjà sur les mêmes événements). Une fois
-ajouté, ces événements remontent automatiquement via le même pipeline
-`log-shipper` → MQTT → poller → Telegram, sans configuration
-supplémentaire.
+## 7. Alerte proactive Home Assistant (optionnel)
 
-## 7. Alertes proactives Home Assistant (optionnel)
+Le poller publie une alerte sur le broker mosquitto du stack
+`log-shipper` (celui déjà utilisé pour le chat), sur le topic
+`factorio/alerts/electricity`, que tu peux consommer avec une
+automatisation Home Assistant (intégration MQTT — ajoute une nouvelle
+entrée de config pointant vers ce broker si ce n'est pas déjà celui que tu
+utilises) :
 
-Le poller publie aussi deux types d'alertes sur le broker mosquitto du
-stack `log-shipper` (celui déjà utilisé pour le chat), sur des topics
-dédiés que tu peux consommer avec une automatisation Home Assistant
-(intégration MQTT — ajoute une nouvelle entrée de config pointant vers ce
-broker si ce n'est pas déjà celui que tu utilises) :
-
-- `factorio/alerts/electricity` — publié quand la consommation dépasse la
-  production (payload `{"status": "deficit", ...}`), puis à nouveau quand
-  ça revient à la normale (`{"status": "ok", ...}`). Réglable via
+- Publié quand la consommation dépasse la production (payload
+  `{"status": "deficit", ...}`), puis à nouveau quand ça revient à la
+  normale (`{"status": "ok", ...}`). Réglable via
   `ELECTRICITY_ALERT_MARGIN_PCT` (défaut 100%) et un cooldown de 5 min
   entre deux alertes consécutives.
-- `factorio/alerts/death` — retransmis à chaque mort de joueur (nécessite
-  `scenario-hooks.lua`, voir section 6).
 
 Exemple d'automatisation HA : trigger sur l'état MQTT de ce topic,
 condition sur `status == deficit`, action `notify.mobile_app_...`.
