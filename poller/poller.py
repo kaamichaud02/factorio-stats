@@ -134,6 +134,16 @@ def poll_once():
     data = json.loads(body)
     data["last_updated"] = datetime.now(timezone.utc).isoformat()
 
+    # Factorio's helpers.table_to_json sérialise une table Lua vide comme un
+    # objet JSON {} plutôt qu'un tableau [] (ambiguïté classique des tables
+    # Lua). On force ici un tableau vide si aucune donnée de production
+    # n'existe encore, pour que le JS côté dashboard puisse toujours faire
+    # .forEach() sans erreur.
+    if not isinstance(data.get("top_production"), list):
+        data["top_production"] = []
+    if not isinstance(data.get("players"), list):
+        data["players"] = []
+
     cur_tick = data.get("tick")
     cur_produced = data.get("electricity_produced")
     cur_consumed = data.get("electricity_consumed")

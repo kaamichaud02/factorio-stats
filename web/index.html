@@ -223,7 +223,7 @@ function render(data) {
   document.getElementById('onlineCount').textContent = data.online_count ?? 0;
   const list = document.getElementById('playerList');
   list.innerHTML = '';
-  if (!data.players || data.players.length === 0) {
+  if (!Array.isArray(data.players) || data.players.length === 0) {
     list.innerHTML = '<li class="empty">Personne en ligne</li>';
   } else {
     data.players.forEach(p => {
@@ -267,7 +267,7 @@ function render(data) {
   // Production
   const tbody = document.querySelector('#productionTable tbody');
   tbody.innerHTML = '';
-  if (!data.top_production || data.top_production.length === 0) {
+  if (!Array.isArray(data.top_production) || data.top_production.length === 0) {
     tbody.innerHTML = '<tr><td colspan="2" class="empty">Aucune donnée de production</td></tr>';
   } else {
     data.top_production.forEach(item => {
