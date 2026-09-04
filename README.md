@@ -86,25 +86,26 @@ protéger, une policy Zero Trust (Entra ID SSO) comme pour tes autres services.
 
 ## 5. Chat en jeu (optionnel)
 
-Le dashboard peut aussi afficher les derniers messages de chat/join/leave.
-Comme le fichier de log du serveur Factorio n'est pas toujours accessible
-directement depuis le serveur qui héberge ce dashboard, ça passe par un
-PostgreSQL existant comme relais :
+Le dashboard peut aussi afficher les derniers messages de chat/join/leave,
+en quasi temps réel via MQTT (pub/sub) :
 
 1. **Sur le serveur Factorio** (là où tourne le jeu), active le flag
    `--console-log /chemin/vers/console.log` sur la ligne `ExecStart` du
    service systemd, puis `sudo systemctl daemon-reload && sudo systemctl
    restart factorio`.
 2. Toujours sur ce serveur, déploie le stack `log-shipper/` (voir son
-   propre `docker-compose.yml`) : ajuste le chemin du bind mount vers ton
-   vrai fichier `console.log`, et configure les variables `POSTGRES_*`
-   dans son `.env` pour pointer vers ta base PostgreSQL existante.
-3. **Sur le serveur Docker/Arcane** (où tourne ce dashboard), configure les
-   mêmes variables `POSTGRES_*` dans le `.env` principal — le poller lira
-   alors la table `chat_messages` à chaque cycle.
+   propre `docker-compose.yml`) : il inclut un broker Mosquitto local et
+   le service `log-shipper` qui tail `console.log` et publie chaque
+   événement sur le topic `factorio/chat`. Ajuste juste le chemin du bind
+   mount vers ton vrai fichier `console.log`.
+3. **Sur le serveur Docker/Arcane** (où tourne ce dashboard), configure
+   `MQTT_HOST` dans le `.env` principal avec l'IP/nom du serveur Factorio
+   (là où tourne mosquitto, port 1883 par défaut) — le poller s'y abonne
+   en tâche de fond et garde les 50 derniers messages en mémoire (avec
+   sauvegarde locale pour survivre à un redémarrage du conteneur).
 
-Si `POSTGRES_HOST` n'est pas configuré, le dashboard fonctionne
-normalement, simplement sans le panneau de chat.
+Si `MQTT_HOST` n'est pas configuré, le dashboard fonctionne normalement,
+simplement sans le panneau de chat.
 
 ## Notes
 

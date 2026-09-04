@@ -10,12 +10,11 @@ services:
       - FACTORIO_RCON_PASSWORD=${RCON_PASSWORD}
       - POLL_INTERVAL=15
       - OUTPUT_PATH=/data/stats.json
-      - POSTGRES_HOST=${POSTGRES_HOST}
-      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - MQTT_HOST=${MQTT_HOST}
+      - MQTT_PORT=${MQTT_PORT:-1883}
+      - MQTT_TOPIC=${MQTT_TOPIC:-factorio/chat}
       - CHAT_LIMIT=50
+      - CHAT_HISTORY_PATH=/data/chat_history.json
     volumes:
       - ./poller/poller.py:/app/poller.py:ro
       - ./poller/requirements.txt:/app/requirements.txt:ro

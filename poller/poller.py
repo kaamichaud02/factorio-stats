@@ -3,6 +3,8 @@
 Poller RCON pour serveur Factorio.
 Interroge le serveur toutes les POLL_INTERVAL secondes et écrit
 un fichier JSON avec les stats (joueurs, recherche, évolution, production).
+S'abonne aussi en tâche de fond à un topic MQTT (alimenté par le service
+log-shipper) pour inclure les derniers messages de chat/join/leave.
 """
 
 import json
@@ -10,13 +12,15 @@ import os
 import socket
 import struct
 import sys
+import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 
 try:
-    import psycopg2
+    import paho.mqtt.client as mqtt
 except ImportError:
-    psycopg2 = None
+    mqtt = None
 
 RCON_HOST = os.environ.get("FACTORIO_RCON_HOST", "127.0.0.1")
 RCON_PORT = int(os.environ.get("FACTORIO_RCON_PORT", "27015"))
@@ -24,17 +28,14 @@ RCON_PASSWORD = os.environ.get("FACTORIO_RCON_PASSWORD", "")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "15"))
 OUTPUT_PATH = os.environ.get("OUTPUT_PATH", "/data/stats.json")
 
-# Connexion PostgreSQL optionnelle — si POSTGRES_HOST n'est pas défini, le
-# dashboard fonctionne normalement mais sans le panneau de chat (dégradation
-# gracieuse, utile tant que log-shipper n'est pas déployé côté serveur
-# Factorio).
-PG_HOST = os.environ.get("POSTGRES_HOST", "")
-PG_PORT = int(os.environ.get("POSTGRES_PORT", "5432"))
-PG_DB = os.environ.get("POSTGRES_DB", "")
-PG_USER = os.environ.get("POSTGRES_USER", "")
-PG_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "")
-PG_TABLE = os.environ.get("POSTGRES_TABLE", "chat_messages")
+# MQTT optionnel — si MQTT_HOST n'est pas défini, le dashboard fonctionne
+# normalement mais sans le panneau de chat (dégradation gracieuse, utile
+# tant que log-shipper/mosquitto n'est pas déployé côté serveur Factorio).
+MQTT_HOST = os.environ.get("MQTT_HOST", "")
+MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
+MQTT_TOPIC = os.environ.get("MQTT_TOPIC", "factorio/chat")
 CHAT_LIMIT = int(os.environ.get("CHAT_LIMIT", "50"))
+CHAT_HISTORY_PATH = os.environ.get("CHAT_HISTORY_PATH", "/data/chat_history.json")
 
 # Lu depuis le fichier VERSION à la racine du projet (bind-mounté avec le
 # reste du repo). Permet de confirmer visuellement, dans le dashboard, que
@@ -118,44 +119,84 @@ class RconError(Exception):
     pass
 
 
-def fetch_chat_messages(limit=CHAT_LIMIT):
-    """Récupère les derniers messages de chat/join/leave depuis
-    PostgreSQL (alimentée par le service log-shipper). Retourne une liste
-    vide (dégradation gracieuse) si PostgreSQL n'est pas configuré ou
-    injoignable, plutôt que de faire échouer tout le relevé."""
-    if psycopg2 is None or not PG_HOST:
-        return []
+# --- Chat MQTT -------------------------------------------------------
+# Un abonné MQTT tourne dans un thread séparé, en continu, et alimente un
+# buffer borné (deque) protégé par un verrou. La boucle principale (poll
+# RCON) lit simplement l'état courant du buffer à chaque cycle. Le buffer
+# est aussi persisté sur disque pour survivre à un redémarrage du
+# conteneur (sinon l'historique de chat repartirait de zéro à chaque
+# redéploiement).
+_chat_lock = threading.Lock()
+_chat_buffer = deque(maxlen=CHAT_LIMIT)
+
+
+def _load_chat_history():
     try:
-        conn = psycopg2.connect(
-            host=PG_HOST,
-            port=PG_PORT,
-            dbname=PG_DB,
-            user=PG_USER,
-            password=PG_PASSWORD,
-            connect_timeout=5,
-        )
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"SELECT player, message, msg_type, occurred_at "
-                    f"FROM {PG_TABLE} ORDER BY occurred_at DESC LIMIT %s",
-                    (limit,),
-                )
-                rows = cur.fetchall()
-        finally:
-            conn.close()
-        return [
-            {
-                "player": r[0],
-                "message": r[1],
-                "type": r[2],
-                "occurred_at": r[3].isoformat(),
-            }
-            for r in rows
-        ]
+        with open(CHAT_HISTORY_PATH) as f:
+            items = json.load(f)
+        with _chat_lock:
+            _chat_buffer.extend(items[-CHAT_LIMIT:])
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+
+def _save_chat_history():
+    try:
+        tmp_path = CHAT_HISTORY_PATH + ".tmp"
+        with _chat_lock:
+            items = list(_chat_buffer)
+        with open(tmp_path, "w") as f:
+            json.dump(items, f)
+        os.replace(tmp_path, CHAT_HISTORY_PATH)
     except Exception as e:
-        print(f"[poller] Erreur lecture chat (Postgres) : {e}", file=sys.stderr, flush=True)
-        return []
+        print(f"[poller] Erreur sauvegarde historique chat : {e}", file=sys.stderr, flush=True)
+
+
+def _on_mqtt_message(client, userdata, msg):
+    try:
+        payload = json.loads(msg.payload.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return
+    with _chat_lock:
+        _chat_buffer.append(payload)
+    _save_chat_history()
+
+
+def start_mqtt_subscriber():
+    if mqtt is None or not MQTT_HOST:
+        print("[poller] MQTT non configuré, panneau de chat désactivé", flush=True)
+        return
+
+    _load_chat_history()
+
+    def _run():
+        client = mqtt.Client()
+        client.on_message = _on_mqtt_message
+
+        def _on_connect(c, userdata, flags, rc):
+            c.subscribe(MQTT_TOPIC, qos=1)
+            print(f"[poller] Abonné à MQTT {MQTT_HOST}:{MQTT_PORT} topic={MQTT_TOPIC}", flush=True)
+
+        client.on_connect = _on_connect
+
+        while True:
+            try:
+                client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
+                client.loop_forever()
+            except Exception as e:
+                print(f"[poller] Erreur connexion MQTT, nouvel essai dans 10s : {e}", file=sys.stderr, flush=True)
+                time.sleep(10)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+
+def get_chat_messages():
+    """Retourne les messages actuellement en buffer, les plus récents en
+    premier (pour affichage type fil d'actualité)."""
+    with _chat_lock:
+        items = list(_chat_buffer)
+    return list(reversed(items))
 
 
 def _send_packet(sock, request_id, packet_type, body):
@@ -230,7 +271,7 @@ def poll_once():
     if not isinstance(data.get("players"), list):
         data["players"] = []
 
-    data["chat_messages"] = fetch_chat_messages()
+    data["chat_messages"] = get_chat_messages()
 
     cur_tick = data.get("tick")
     cur_produced = data.get("electricity_produced")
@@ -264,6 +305,8 @@ def poll_once():
 def main():
     print(f"[poller] Démarrage — RCON {RCON_HOST}:{RCON_PORT}, intervalle {POLL_INTERVAL}s", flush=True)
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+
+    start_mqtt_subscriber()
 
     while True:
         try:

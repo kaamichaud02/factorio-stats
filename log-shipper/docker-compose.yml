@@ -1,4 +1,16 @@
 services:
+  mosquitto:
+    image: eclipse-mosquitto:${MQTT_VERSION:-2}
+    container_name: ${STACK_NAME:-factorio-mosquitto}
+    restart: unless-stopped
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+      - "${MQTT_WS_PORT:-9001}:9001"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+
   log-shipper:
     image: python:3.12-alpine
     container_name: factorio-log-shipper
@@ -8,11 +20,9 @@ services:
       - LOG_PATH=/factorio-logs/console.log
       - OFFSET_PATH=/data/offset.txt
       - POLL_INTERVAL=2
-      - POSTGRES_HOST=${POSTGRES_HOST}
-      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=1883
+      - MQTT_TOPIC=${MQTT_TOPIC:-factorio/chat}
     volumes:
       - ./ship_chat.py:/app/ship_chat.py:ro
       - ./requirements.txt:/app/requirements.txt:ro
@@ -21,3 +31,9 @@ services:
       - /opt/factorio/console.log:/factorio-logs/console.log:ro
       - ./data:/data
     restart: unless-stopped
+    depends_on:
+      - mosquitto
+
+volumes:
+  mosquitto-data:
+  mosquitto-log:

@@ -1,5 +1,6 @@
 .env
 data/stats.json
+data/chat_history.json
 log-shipper/data/
 __pycache__/
 *.pyc
