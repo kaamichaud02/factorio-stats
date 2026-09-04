@@ -19,6 +19,21 @@ RCON_PASSWORD = os.environ.get("FACTORIO_RCON_PASSWORD", "")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "15"))
 OUTPUT_PATH = os.environ.get("OUTPUT_PATH", "/data/stats.json")
 
+# Lu depuis le fichier VERSION à la racine du projet (bind-mounté avec le
+# reste du repo). Permet de confirmer visuellement, dans le dashboard, que
+# le conteneur en cours d'exécution a bien récupéré le dernier code après
+# un déploiement/sync — et pas une version mise en cache.
+def _read_version():
+    for candidate in ("/app/VERSION", "/VERSION"):
+        try:
+            with open(candidate) as f:
+                return f.read().strip()
+        except FileNotFoundError:
+            continue
+    return "inconnue"
+
+POLLER_VERSION = _read_version()
+
 SERVERDATA_AUTH = 3
 SERVERDATA_AUTH_RESPONSE = 2
 SERVERDATA_EXECCOMMAND = 2
@@ -137,6 +152,7 @@ def poll_once():
     body = rcon_command(f"/silent-command {LUA_QUERY}")
     data = json.loads(body)
     data["last_updated"] = datetime.now(timezone.utc).isoformat()
+    data["poller_version"] = POLLER_VERSION
 
     # Factorio's helpers.table_to_json sérialise une table Lua vide comme un
     # objet JSON {} plutôt qu'un tableau [] (ambiguïté classique des tables
@@ -195,6 +211,7 @@ def main():
             error_data = {
                 "error": str(e),
                 "last_updated": datetime.now(timezone.utc).isoformat(),
+                "poller_version": POLLER_VERSION,
             }
             try:
                 tmp_path = OUTPUT_PATH + ".tmp"

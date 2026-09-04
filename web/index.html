@@ -151,7 +151,7 @@
 
 </div>
 
-<div class="footer">Mis à jour automatiquement toutes les 15 secondes</div>
+<div class="footer">Mis à jour automatiquement toutes les 15 secondes · <span id="pollerVersion">version…</span></div>
 
 <script>
 async function fetchStats() {
@@ -218,6 +218,8 @@ function render(data) {
 
   document.getElementById('lastUpdated').textContent =
     'Dernière mise à jour : ' + new Date(data.last_updated).toLocaleTimeString('fr-CA');
+  document.getElementById('pollerVersion').textContent =
+    'poller ' + (data.poller_version || 'inconnue');
 
   // Joueurs
   document.getElementById('onlineCount').textContent = data.online_count ?? 0;
