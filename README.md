@@ -107,6 +107,30 @@ en quasi temps réel via MQTT (pub/sub) :
 Si `MQTT_HOST` n'est pas configuré, le dashboard fonctionne normalement,
 simplement sans le panneau de chat.
 
+## 6. Notifications Telegram (optionnel)
+
+Le poller peut envoyer des notifications Telegram sur des événements clés :
+recherche terminée, fusée/satellite lancé, join/leave (détectés
+automatiquement, aucune config côté serveur Factorio nécessaire au-delà de
+RCON déjà configuré).
+
+1. Crée un bot via [@BotFather](https://t.me/BotFather) sur Telegram
+   (`/newbot`), récupère le token.
+2. Démarre une conversation avec ton bot, puis va sur
+   `https://api.telegram.org/bot<TON_TOKEN>/getUpdates` pour récupérer ton
+   `chat_id`.
+3. Ajoute `TELEGRAM_BOT_TOKEN` et `TELEGRAM_CHAT_ID` dans le `.env` du
+   projet `factorio-stats` (sur le serveur Docker/Arcane), redéploie le
+   poller.
+
+**Mort de joueur et attaque de biters** nécessitent en plus un hook dans
+le `control.lua` de ton scénario — voir `scenario-hooks.lua` à la racine
+du repo pour le code à fusionner (attention : ne pas écraser tes handlers
+`on_event` existants s'il y en a déjà sur les mêmes événements). Une fois
+ajouté, ces événements remontent automatiquement via le même pipeline
+`log-shipper` → MQTT → poller → Telegram, sans configuration
+supplémentaire.
+
 ## Notes
 
 - Le poller interroge le serveur toutes les 15 secondes (modifiable via

@@ -14,6 +14,8 @@ import struct
 import sys
 import threading
 import time
+import urllib.request
+import urllib.parse
 from collections import deque
 from datetime import datetime, timezone
 
@@ -45,6 +47,15 @@ CHAT_HISTORY_PATH = os.environ.get("CHAT_HISTORY_PATH", "/data/chat_history.json
 HISTORY_PATH = os.environ.get("HISTORY_PATH", "/data/history.json")
 HISTORY_INTERVAL = int(os.environ.get("HISTORY_INTERVAL", "300"))
 HISTORY_MAX_POINTS = int(os.environ.get("HISTORY_MAX_POINTS", "288"))
+
+# Notifications Telegram (optionnel) — envoyées quand TELEGRAM_BOT_TOKEN et
+# TELEGRAM_CHAT_ID sont configurés. Couvre : recherche terminée, fusée/
+# satellite lancé (détectés via RCON) + tout événement "notable" reçu par
+# MQTT (join/leave déjà présents, et mort de joueur/attaque de biters si le
+# hook optionnel côté scénario est ajouté — voir scenario-hooks.lua).
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+NOTIFY_MQTT_TYPES = {"join", "leave", "death", "biter_attack"}
 
 # Lu depuis le fichier VERSION à la racine du projet (bind-mounté avec le
 # reste du repo). Permet de confirmer visuellement, dans le dashboard, que
@@ -116,7 +127,10 @@ LUA_QUERY = (
     "table.sort(production,function(a,b) return a.count>b.count end) "
     "local top={} "
     "for i=1,math.min(30,#production) do top[i]=production[i] end "
+    "local ok6,rockets=pcall(function() return force.rockets_launched end) "
+    "if not (ok6 and rockets) then rockets=0 end "
     "local data={tick=game.tick,players=players,online_count=#game.connected_players,"
+    "rockets_launched=rockets,"
     "research=research,techs_done=techs_done,techs_total=techs_total,"
     "evolution=evolution,electricity_produced=electricity_produced,"
     "electricity_consumed=electricity_consumed,top_production=top} "
@@ -184,6 +198,23 @@ class RconError(Exception):
     pass
 
 
+def send_telegram(text):
+    """Envoie une notification Telegram si configuré. Best-effort : une
+    erreur d'envoi ne doit jamais faire planter le poller."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = urllib.parse.urlencode({
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": text,
+        }).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, method="POST")
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        print(f"[poller] Erreur envoi Telegram : {e}", file=sys.stderr, flush=True)
+
+
 # --- Chat MQTT -------------------------------------------------------
 # Un abonné MQTT tourne dans un thread séparé, en continu, et alimente un
 # buffer borné (deque) protégé par un verrou. La boucle principale (poll
@@ -225,6 +256,12 @@ def _on_mqtt_message(client, userdata, msg):
     with _chat_lock:
         _chat_buffer.append(payload)
     _save_chat_history()
+
+    msg_type = payload.get("type")
+    if msg_type in NOTIFY_MQTT_TYPES:
+        icons = {"join": "🟢", "leave": "🔴", "death": "💀", "biter_attack": "⚠️"}
+        icon = icons.get(msg_type, "ℹ️")
+        send_telegram(f"{icon} {payload.get('message', '')}")
 
 
 def start_mqtt_subscriber():
@@ -317,7 +354,14 @@ def rcon_command(command):
 
 # État du relevé précédent, utilisé pour calculer un taux instantané
 # (Watts) à partir de deux relevés cumulés successifs.
-_previous_reading = {"tick": None, "produced": None, "consumed": None}
+_previous_reading = {
+    "tick": None,
+    "produced": None,
+    "consumed": None,
+    "techs_done": None,
+    "research_name": None,
+    "rockets_launched": None,
+}
 
 
 def poll_once():
@@ -365,6 +409,29 @@ def poll_once():
     prev["tick"] = cur_tick
     prev["produced"] = cur_produced
     prev["consumed"] = cur_consumed
+
+    # --- Détection d'événements (recherche terminée, fusée lancée) ---
+    cur_techs_done = data.get("techs_done")
+    if (
+        prev["techs_done"] is not None
+        and cur_techs_done is not None
+        and cur_techs_done > prev["techs_done"]
+    ):
+        completed_name = prev["research_name"] or "une technologie"
+        send_telegram(f"🔬 Recherche terminée : {completed_name}")
+
+    cur_research_name = (data.get("research") or {}).get("name")
+    prev["techs_done"] = cur_techs_done
+    prev["research_name"] = cur_research_name
+
+    cur_rockets = data.get("rockets_launched")
+    if (
+        prev["rockets_launched"] is not None
+        and cur_rockets is not None
+        and cur_rockets > prev["rockets_launched"]
+    ):
+        send_telegram(f"🚀 Fusée lancée ! (total : {cur_rockets})")
+    prev["rockets_launched"] = cur_rockets
 
     return data
 

@@ -31,6 +31,10 @@ MQTT_TOPIC = os.environ.get("MQTT_TOPIC", "factorio/chat")
 RE_CHAT = re.compile(r"\[CHAT\]\s+(?P<player>[^:]+):\s+(?P<message>.*)$")
 RE_JOIN = re.compile(r"\[JOIN\]\s+(?P<player>.+?)\s+joined the game$")
 RE_LEAVE = re.compile(r"\[LEAVE\]\s+(?P<player>.+?)\s+left the game$")
+# Optionnel — n'apparaît que si le hook scenario-hooks.lua est ajouté au
+# control.lua du scénario (voir ce fichier pour les instructions). Format
+# émis par le hook : [EVENT:death] PlayerName ou [EVENT:biter_attack] ...
+RE_EVENT = re.compile(r"\[EVENT:(?P<subtype>[a-z_]+)\]\s+(?P<message>.*)$")
 
 
 def parse_line(line):
@@ -47,6 +51,9 @@ def parse_line(line):
     if m:
         player = m.group("player").strip()
         return "leave", player, f"{player} a quitté la partie"
+    m = RE_EVENT.search(line)
+    if m:
+        return m.group("subtype"), None, m.group("message").strip()
     return None
 
 
