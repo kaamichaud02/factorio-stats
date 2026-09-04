@@ -53,7 +53,7 @@ HISTORY_MAX_POINTS = int(os.environ.get("HISTORY_MAX_POINTS", "288"))
 # satellite lancé (détectés via RCON) et join/leave (reçus via MQTT).
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
-NOTIFY_MQTT_TYPES = {"join", "leave"}
+NOTIFY_MQTT_TYPES = {"join", "leave", "chat"}
 
 # Alertes proactives publiées sur MQTT (topic factorio/alerts/...) pour
 # être consommées par une automatisation Home Assistant (notif mobile,
@@ -280,9 +280,13 @@ def _on_mqtt_message(client, userdata, msg):
 
     msg_type = payload.get("type")
     if msg_type in NOTIFY_MQTT_TYPES:
-        icons = {"join": "🟢", "leave": "🔴"}
+        icons = {"join": "🟢", "leave": "🔴", "chat": "💬"}
         icon = icons.get(msg_type, "ℹ️")
-        send_telegram(f"{icon} {payload.get('message', '')}")
+        if msg_type == "chat":
+            player = payload.get("player") or "?"
+            send_telegram(f"{icon} {player}: {payload.get('message', '')}")
+        else:
+            send_telegram(f"{icon} {payload.get('message', '')}")
 
 
 def start_mqtt_subscriber():
