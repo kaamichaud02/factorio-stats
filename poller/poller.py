@@ -69,13 +69,22 @@ LUA_QUERY = (
     "for _,v in pairs(stats.output_counts) do electricity_produced=electricity_produced+v end "
     "for _,v in pairs(stats.input_counts) do electricity_consumed=electricity_consumed+v end "
     "end end end end "
-    "local production={} "
-    "local stats=force.get_item_production_statistics(game.surfaces[1].name) "
+    "local production_totals={} "
+    # On agrège la production sur TOUTES les surfaces (pas seulement
+    # surfaces[1]/Nauvis) — indispensable pour les scénarios custom ou les
+    # parties Space Age où la production a lieu ailleurs.
+    "for _,surface in pairs(game.surfaces) do "
+    "local ok5,stats2=pcall(function() return force.get_item_production_statistics(surface.name) end) "
+    "if ok5 and stats2 then "
     # ATTENTION: pour item_production_statistics, l'API Factorio inverse
     # input/output par rapport à l'intuition : input_counts = items PRODUITS,
     # output_counts = items CONSOMMÉS. (Différent des stats du réseau
     # électrique ci-dessus, où output = produit comme on s'y attend.)
-    "for name,count in pairs(stats.input_counts) do "
+    "for name,count in pairs(stats2.input_counts) do "
+    "production_totals[name]=(production_totals[name] or 0)+count end "
+    "end end "
+    "local production={} "
+    "for name,count in pairs(production_totals) do "
     "table.insert(production,{name=name,count=count}) end "
     "table.sort(production,function(a,b) return a.count>b.count end) "
     "local top={} "
