@@ -96,6 +96,7 @@
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
   table td { padding: 5px 0; border-bottom: 1px solid var(--panel-border); }
   table td:last-child { text-align: right; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .production-scroll { max-height: 420px; overflow-y: auto; }
   .footer {
     text-align: center;
     color: var(--text-dim2);
@@ -146,7 +147,9 @@
 
   <div class="panel" style="grid-column: 1 / -1;">
     <h2>Top production (items)</h2>
-    <table id="productionTable"><tbody></tbody></table>
+    <div class="production-scroll">
+      <table id="productionTable"><tbody></tbody></table>
+    </div>
   </div>
 
 </div>

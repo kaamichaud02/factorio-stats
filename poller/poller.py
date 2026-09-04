@@ -79,7 +79,7 @@ LUA_QUERY = (
     "table.insert(production,{name=name,count=count}) end "
     "table.sort(production,function(a,b) return a.count>b.count end) "
     "local top={} "
-    "for i=1,math.min(15,#production) do top[i]=production[i] end "
+    "for i=1,math.min(30,#production) do top[i]=production[i] end "
     "local data={tick=game.tick,players=players,online_count=#game.connected_players,"
     "research=research,techs_done=techs_done,techs_total=techs_total,"
     "evolution=evolution,electricity_produced=electricity_produced,"
