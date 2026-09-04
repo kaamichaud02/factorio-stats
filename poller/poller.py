@@ -56,7 +56,11 @@ LUA_QUERY = (
     "end end end end "
     "local production={} "
     "local stats=force.get_item_production_statistics(game.surfaces[1].name) "
-    "for name,count in pairs(stats.output_counts) do "
+    # ATTENTION: pour item_production_statistics, l'API Factorio inverse
+    # input/output par rapport à l'intuition : input_counts = items PRODUITS,
+    # output_counts = items CONSOMMÉS. (Différent des stats du réseau
+    # électrique ci-dessus, où output = produit comme on s'y attend.)
+    "for name,count in pairs(stats.input_counts) do "
     "table.insert(production,{name=name,count=count}) end "
     "table.sort(production,function(a,b) return a.count>b.count end) "
     "local top={} "
