@@ -1,0 +1,27 @@
+services:
+  poller:
+    image: python:3.12-alpine
+    container_name: factorio-stats-poller
+    working_dir: /app
+    command: ["python", "poller.py"]
+    environment:
+      - FACTORIO_RCON_HOST=${RCON_HOST}
+      - FACTORIO_RCON_PORT=${RCON_PORT:-27015}
+      - FACTORIO_RCON_PASSWORD=${RCON_PASSWORD}
+      - POLL_INTERVAL=15
+      - OUTPUT_PATH=/data/stats.json
+    volumes:
+      - ./poller/poller.py:/app/poller.py:ro
+      - ./data:/data
+    restart: unless-stopped
+  web:
+    image: nginx:alpine
+    container_name: factorio-stats-web
+    volumes:
+      - ./web:/usr/share/nginx/html
+      - ./data:/usr/share/nginx/html/data:ro
+    ports:
+      - "8090:80"
+    restart: unless-stopped
+    depends_on:
+      - poller

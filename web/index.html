@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Factorio — Stats du serveur</title>
+<style>
+  :root {
+    --bg: #16181d;
+    --panel: #1f2229;
+    --panel-border: #2c3038;
+    --accent: #e8912d;
+    --accent-soft: #4a3520;
+    --text: #e8e6e1;
+    --text-dim: #9a9da5;
+    --text-dim2: #8b8e96;
+    --green: #6cbf6c;
+    --red: #d16b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px 16px 60px;
+  }
+  h1 {
+    text-align: center;
+    font-size: 1.6rem;
+    margin: 0 0 4px;
+    letter-spacing: 0.5px;
+  }
+  .subtitle {
+    text-align: center;
+    color: var(--text-dim2);
+    font-size: 0.85rem;
+    margin-bottom: 28px;
+  }
+  .grid {
+    max-width: 960px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .panel h2 {
+    margin: 0 0 14px;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--accent);
+  }
+  .player-list { list-style: none; padding: 0; margin: 0; }
+  .player-list li {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--panel-border);
+    font-size: 0.92rem;
+  }
+  .player-list li:last-child { border-bottom: none; }
+  .player-time { color: var(--text-dim2); font-size: 0.82rem; }
+  .empty { color: var(--text-dim2); font-style: italic; font-size: 0.9rem; }
+  .big-number {
+    font-size: 2.2rem;
+    font-weight: 600;
+    color: var(--accent);
+  }
+  .bar-bg {
+    background: #2a2d34;
+    border-radius: 6px;
+    height: 10px;
+    overflow: hidden;
+    margin-top: 8px;
+  }
+  .bar-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.4s ease;
+  }
+  .bar-fill.evolution { background: var(--red); }
+  .bar-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.82rem;
+    color: var(--text-dim2);
+    margin-top: 6px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  table td { padding: 5px 0; border-bottom: 1px solid var(--panel-border); }
+  table td:last-child { text-align: right; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .footer {
+    text-align: center;
+    color: var(--text-dim2);
+    font-size: 0.78rem;
+    margin-top: 30px;
+  }
+  .error-banner {
+    max-width: 960px;
+    margin: 0 auto 20px;
+    background: #3a1f1f;
+    border: 1px solid #5c2c2c;
+    color: #f0a5a5;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    display: none;
+  }
+</style>
+</head>
+<body>
+
+<h1>🏭 Factorio — État du serveur</h1>
+<div class="subtitle" id="lastUpdated">Chargement…</div>
+
+<div class="error-banner" id="errorBanner"></div>
+
+<div class="grid">
+
+  <div class="panel">
+    <h2>Joueurs en ligne</h2>
+    <div class="big-number" id="onlineCount">–</div>
+    <ul class="player-list" id="playerList"></ul>
+  </div>
+
+  <div class="panel">
+    <h2>Recherche en cours</h2>
+    <div id="researchName" class="empty">Aucune donnée</div>
+    <div class="bar-bg"><div class="bar-fill" id="researchBar" style="width:0%"></div></div>
+    <div class="bar-label" id="techCount"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Électricité</h2>
+    <div class="big-number" id="electricityPct">–</div>
+    <div class="bar-bg"><div class="bar-fill evolution" id="electricityBar" style="width:0%"></div></div>
+    <div class="bar-label" id="electricityDetail"></div>
+  </div>
+
+  <div class="panel" style="grid-column: 1 / -1;">
+    <h2>Top production (items)</h2>
+    <table id="productionTable"><tbody></tbody></table>
+  </div>
+
+</div>
+
+<div class="footer">Mis à jour automatiquement toutes les 15 secondes</div>
+
+<script>
+async function fetchStats() {
+  try {
+    const res = await fetch('data/stats.json?t=' + Date.now());
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    render(data);
+  } catch (e) {
+    showError('Impossible de charger les stats : ' + e.message);
+  }
+}
+
+function showError(msg) {
+  const banner = document.getElementById('errorBanner');
+  banner.style.display = 'block';
+  banner.textContent = msg;
+}
+
+function hideError() {
+  document.getElementById('errorBanner').style.display = 'none';
+}
+
+function formatTicksAsTime(ticks) {
+  const totalSeconds = Math.floor(ticks / 60);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  if (h > 0) return `${h}h${String(m).padStart(2,'0')}`;
+  return `${m}min`;
+}
+
+function formatJoules(j) {
+  const units = [
+    { threshold: 1e15, suffix: 'PJ' },
+    { threshold: 1e12, suffix: 'TJ' },
+    { threshold: 1e9, suffix: 'GJ' },
+    { threshold: 1e6, suffix: 'MJ' },
+    { threshold: 1e3, suffix: 'kJ' },
+  ];
+  for (const u of units) {
+    if (j >= u.threshold) return (j / u.threshold).toFixed(2) + ' ' + u.suffix;
+  }
+  return Math.round(j) + ' J';
+}
+
+function formatWatts(w) {
+  const units = [
+    { threshold: 1e9, suffix: 'GW' },
+    { threshold: 1e6, suffix: 'MW' },
+    { threshold: 1e3, suffix: 'kW' },
+  ];
+  for (const u of units) {
+    if (w >= u.threshold) return (w / u.threshold).toFixed(2) + ' ' + u.suffix;
+  }
+  return Math.round(w) + ' W';
+}
+
+function render(data) {
+  if (data.error) {
+    showError('Erreur côté serveur : ' + data.error);
+    return;
+  }
+  hideError();
+
+  document.getElementById('lastUpdated').textContent =
+    'Dernière mise à jour : ' + new Date(data.last_updated).toLocaleTimeString('fr-CA');
+
+  // Joueurs
+  document.getElementById('onlineCount').textContent = data.online_count ?? 0;
+  const list = document.getElementById('playerList');
+  list.innerHTML = '';
+  if (!data.players || data.players.length === 0) {
+    list.innerHTML = '<li class="empty">Personne en ligne</li>';
+  } else {
+    data.players.forEach(p => {
+      const li = document.createElement('li');
+      li.innerHTML = `<span>${p.admin ? '⭐ ' : ''}${escapeHtml(p.name)}</span>
+                       <span class="player-time">${formatTicksAsTime(p.online_time)}</span>`;
+      list.appendChild(li);
+    });
+  }
+
+  // Recherche
+  const researchName = document.getElementById('researchName');
+  const researchBar = document.getElementById('researchBar');
+  const techCount = document.getElementById('techCount');
+  if (data.research) {
+    researchName.textContent = data.research.name;
+    researchName.classList.remove('empty');
+    researchBar.style.width = Math.round((data.research.progress || 0) * 100) + '%';
+  } else {
+    researchName.textContent = 'Aucune recherche active';
+    researchName.classList.add('empty');
+    researchBar.style.width = '0%';
+  }
+  techCount.textContent = `${data.techs_done ?? 0} / ${data.techs_total ?? 0} technologies`;
+
+  // Électricité (taux instantané calculé côté poller entre 2 relevés)
+  const producedW = data.electricity_produced_watts;
+  const consumedW = data.electricity_consumed_watts;
+  if (producedW == null || consumedW == null) {
+    document.getElementById('electricityPct').textContent = '…';
+    document.getElementById('electricityBar').style.width = '0%';
+    document.getElementById('electricityDetail').textContent = 'Calcul en cours (premier relevé)';
+  } else {
+    const satisfactionPct = producedW > 0 ? Math.min(100, Math.round((consumedW / producedW) * 100)) : 0;
+    document.getElementById('electricityPct').textContent = satisfactionPct + '%';
+    document.getElementById('electricityBar').style.width = satisfactionPct + '%';
+    document.getElementById('electricityDetail').textContent =
+      `${formatWatts(producedW)} produits · ${formatWatts(consumedW)} consommés`;
+  }
+
+  // Production
+  const tbody = document.querySelector('#productionTable tbody');
+  tbody.innerHTML = '';
+  if (!data.top_production || data.top_production.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="2" class="empty">Aucune donnée de production</td></tr>';
+  } else {
+    data.top_production.forEach(item => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${escapeHtml(item.name)}</td><td>${item.count.toLocaleString('fr-CA')}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+fetchStats();
+setInterval(fetchStats, 15000);
+</script>
+
+</body>
+</html>
