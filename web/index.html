@@ -147,6 +147,15 @@
     font-variant-numeric: tabular-nums;
     cursor: pointer;
   }
+  .science-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    margin-top: 10px;
+    font-size: 0.88rem;
+  }
+  .science-stats .stat-label { color: var(--text-dim2); margin-right: 6px; }
+  .science-stats .stat-value { color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
   .footer {
     text-align: center;
     color: var(--text-dim2);
@@ -200,6 +209,16 @@
     <div class="big-number" id="electricityPct">–</div>
     <div class="bar-bg"><div class="bar-fill evolution" id="electricityBar" style="width:0%"></div></div>
     <div class="bar-label" id="electricityDetail"></div>
+  </div>
+
+  <div class="panel" style="grid-column: 1 / -1;">
+    <h2>Production scientifique</h2>
+    <svg id="chartScience" viewBox="0 0 700 90" width="100%" height="90"></svg>
+    <div class="science-stats">
+      <div><span class="stat-label">Progression :</span><span class="stat-value" id="scienceProgress">–</span></div>
+      <div><span class="stat-label">Science par minute :</span><span class="stat-value" id="sciencePerMinute">–</span></div>
+      <div><span class="stat-label">Temps restant estimé :</span><span class="stat-value" id="scienceRemaining">–</span></div>
+    </div>
   </div>
 
   <div class="panel" style="grid-column: 1 / -1;">
@@ -287,9 +306,19 @@ function formatWatts(w) {
   return Math.round(w) + ' W';
 }
 
+function formatDuration(totalSeconds) {
+  const s = Math.round(totalSeconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}h${String(m).padStart(2, '0')}m`;
+  return `${m}m${String(sec).padStart(2, '0')}s`;
+}
+
 function drawSparkline(svgId, values, color) {
   const svg = document.getElementById(svgId);
-  const w = 260, h = 70, pad = 4;
+  const viewBox = (svg.getAttribute('viewBox') || '0 0 260 70').split(' ').map(Number);
+  const w = viewBox[2], h = viewBox[3], pad = 4;
   svg.innerHTML = '';
   if (!values || values.length < 2) {
     const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -447,6 +476,18 @@ function render(data) {
     evolutionValues.length ? evolutionValues[evolutionValues.length - 1].toFixed(1) + '%' : '–';
   document.getElementById('chartProductionCurrent').textContent =
     productionValues.length ? productionValues[productionValues.length - 1].toLocaleString('fr-CA') : '–';
+
+  // Production scientifique
+  const sci = data.science_progress || {};
+  drawSparkline('chartScience', sci.rate_history || [], 'var(--accent)');
+  document.getElementById('scienceProgress').textContent =
+    (sci.absolute != null && sci.total != null)
+      ? `${sci.absolute.toLocaleString('fr-CA')} / ${sci.total.toLocaleString('fr-CA')}`
+      : 'Aucune recherche active';
+  document.getElementById('sciencePerMinute').textContent =
+    sci.science_per_minute != null ? sci.science_per_minute.toLocaleString('fr-CA') : '–';
+  document.getElementById('scienceRemaining').textContent =
+    sci.remaining_seconds != null ? formatDuration(sci.remaining_seconds) : '–';
 }
 
 function escapeHtml(str) {

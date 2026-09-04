@@ -48,6 +48,11 @@ HISTORY_PATH = os.environ.get("HISTORY_PATH", "/data/history.json")
 HISTORY_INTERVAL = int(os.environ.get("HISTORY_INTERVAL", "300"))
 HISTORY_MAX_POINTS = int(os.environ.get("HISTORY_MAX_POINTS", "288"))
 
+# Fenêtre fine (non décimée) pour le mini-graphique "science/minute" façon
+# panneau in-game — un point par cycle de sondage, sur ~10 minutes.
+SCIENCE_RATE_WINDOW_MINUTES = int(os.environ.get("SCIENCE_RATE_WINDOW_MINUTES", "10"))
+SCIENCE_RATE_MAX_POINTS = max(2, (SCIENCE_RATE_WINDOW_MINUTES * 60) // max(POLL_INTERVAL, 1))
+
 # Notifications Telegram (optionnel) — envoyées quand TELEGRAM_BOT_TOKEN et
 # TELEGRAM_CHAT_ID sont configurés. Couvre : recherche terminée, fusée/
 # satellite lancé (détectés via RCON) et join/leave (reçus via MQTT).
@@ -93,7 +98,8 @@ LUA_QUERY = (
     "local force=game.forces.player "
     "local research=nil "
     "if force.current_research then "
-    "research={name=force.current_research.name,progress=force.research_progress} end "
+    "research={name=force.current_research.name,progress=force.research_progress,"
+    "unit_count=force.current_research.research_unit_count} end "
     "local techs_done=0 local techs_total=0 "
     "for _,t in pairs(force.technologies) do techs_total=techs_total+1 "
     "if t.researched then techs_done=techs_done+1 end end "
@@ -148,6 +154,9 @@ LUA_QUERY = (
 _history_lock = threading.Lock()
 _history_points = deque(maxlen=HISTORY_MAX_POINTS)
 _last_history_ts = 0
+
+# Historique fin (1 point/cycle) pour le mini-graphique science/minute
+_science_rate_history = deque(maxlen=SCIENCE_RATE_MAX_POINTS)
 
 
 def _load_history():
@@ -389,6 +398,7 @@ _previous_reading = {
     "rockets_launched": None,
     "last_produced_watts": None,
     "last_consumed_watts": None,
+    "research_absolute": None,
 }
 _last_electricity_alert_ts = 0
 _electricity_alert_active = False
@@ -452,9 +462,43 @@ def poll_once():
         else:
             data["electricity_produced_watts"] = _previous_reading.get("last_produced_watts")
             data["electricity_consumed_watts"] = _previous_reading.get("last_consumed_watts")
+
+        # --- Science / minute (façon panneau "Science production information") ---
+        cur_research = data.get("research")
+        if cur_research and dt_seconds >= MIN_DT_SECONDS:
+            unit_count = cur_research.get("unit_count") or 0
+            absolute_progress = unit_count * (cur_research.get("progress") or 0)
+            same_research = cur_research.get("name") == prev.get("research_name")
+            prev_absolute = prev.get("research_absolute")
+            if same_research and prev_absolute is not None and absolute_progress >= prev_absolute:
+                rate_per_minute = (absolute_progress - prev_absolute) / (dt_seconds / 60.0)
+            else:
+                rate_per_minute = None
+            prev["research_absolute"] = absolute_progress
+        else:
+            unit_count = (cur_research or {}).get("unit_count") if cur_research else None
+            absolute_progress = None
+            rate_per_minute = None
     else:
         data["electricity_produced_watts"] = None
         data["electricity_consumed_watts"] = None
+        cur_research = data.get("research")
+        unit_count = (cur_research or {}).get("unit_count") if cur_research else None
+        absolute_progress = None
+        rate_per_minute = None
+
+    _science_rate_history.append(rate_per_minute if rate_per_minute is not None else 0)
+    remaining_seconds = None
+    if absolute_progress is not None and unit_count and rate_per_minute and rate_per_minute > 0:
+        remaining_seconds = max(0, (unit_count - absolute_progress) / rate_per_minute * 60)
+
+    data["science_progress"] = {
+        "absolute": round(absolute_progress) if absolute_progress is not None else None,
+        "total": unit_count,
+        "science_per_minute": round(rate_per_minute, 1) if rate_per_minute is not None else None,
+        "remaining_seconds": remaining_seconds,
+        "rate_history": list(_science_rate_history),
+    }
 
     _previous_reading["last_produced_watts"] = data.get("electricity_produced_watts")
     _previous_reading["last_consumed_watts"] = data.get("electricity_consumed_watts")
