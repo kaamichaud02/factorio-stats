@@ -97,6 +97,23 @@
   table td { padding: 5px 0; border-bottom: 1px solid var(--panel-border); }
   table td:last-child { text-align: right; color: var(--accent); font-variant-numeric: tabular-nums; }
   .production-scroll { max-height: 420px; overflow-y: auto; }
+  .chat-scroll { max-height: 360px; overflow-y: auto; }
+  .chat-list { list-style: none; padding: 0; margin: 0; }
+  .chat-list li {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--panel-border);
+    font-size: 0.88rem;
+    line-height: 1.4;
+  }
+  .chat-list li:last-child { border-bottom: none; }
+  .chat-list li.system-event { color: var(--text-dim2); font-style: italic; }
+  .chat-time {
+    color: var(--text-dim2);
+    font-size: 0.78rem;
+    margin-right: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .chat-player { color: var(--accent); font-weight: 600; }
   .footer {
     text-align: center;
     color: var(--text-dim2);
@@ -149,6 +166,13 @@
     <h2>Top production (items)</h2>
     <div class="production-scroll">
       <table id="productionTable"><tbody></tbody></table>
+    </div>
+  </div>
+
+  <div class="panel" style="grid-column: 1 / -1;">
+    <h2>Chat en jeu</h2>
+    <div class="chat-scroll">
+      <ul class="chat-list" id="chatList"></ul>
     </div>
   </div>
 
@@ -279,6 +303,25 @@ function render(data) {
       const tr = document.createElement('tr');
       tr.innerHTML = `<td>${escapeHtml(item.name)}</td><td>${item.count.toLocaleString('fr-CA')}</td>`;
       tbody.appendChild(tr);
+    });
+  }
+
+  // Chat en jeu
+  const chatList = document.getElementById('chatList');
+  chatList.innerHTML = '';
+  if (!Array.isArray(data.chat_messages) || data.chat_messages.length === 0) {
+    chatList.innerHTML = '<li class="empty">Aucun message récent</li>';
+  } else {
+    data.chat_messages.forEach(m => {
+      const li = document.createElement('li');
+      const time = new Date(m.occurred_at).toLocaleTimeString('fr-CA');
+      if (m.type === 'chat') {
+        li.innerHTML = `<span class="chat-time">${time}</span><span class="chat-player">${escapeHtml(m.player || '?')}</span>: ${escapeHtml(m.message)}`;
+      } else {
+        li.classList.add('system-event');
+        li.innerHTML = `<span class="chat-time">${time}</span>${escapeHtml(m.message)}`;
+      }
+      chatList.appendChild(li);
     });
   }
 }

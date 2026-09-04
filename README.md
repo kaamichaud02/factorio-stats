@@ -84,6 +84,28 @@ ajoute une règle d'ingress :
 Puis crée l'enregistrement DNS correspondant côté Cloudflare et, si tu veux le
 protéger, une policy Zero Trust (Entra ID SSO) comme pour tes autres services.
 
+## 5. Chat en jeu (optionnel)
+
+Le dashboard peut aussi afficher les derniers messages de chat/join/leave.
+Comme le fichier de log du serveur Factorio n'est pas toujours accessible
+directement depuis le serveur qui héberge ce dashboard, ça passe par un
+PostgreSQL existant comme relais :
+
+1. **Sur le serveur Factorio** (là où tourne le jeu), active le flag
+   `--console-log /chemin/vers/console.log` sur la ligne `ExecStart` du
+   service systemd, puis `sudo systemctl daemon-reload && sudo systemctl
+   restart factorio`.
+2. Toujours sur ce serveur, déploie le stack `log-shipper/` (voir son
+   propre `docker-compose.yml`) : ajuste le chemin du bind mount vers ton
+   vrai fichier `console.log`, et configure les variables `POSTGRES_*`
+   dans son `.env` pour pointer vers ta base PostgreSQL existante.
+3. **Sur le serveur Docker/Arcane** (où tourne ce dashboard), configure les
+   mêmes variables `POSTGRES_*` dans le `.env` principal — le poller lira
+   alors la table `chat_messages` à chaque cycle.
+
+Si `POSTGRES_HOST` n'est pas configuré, le dashboard fonctionne
+normalement, simplement sans le panneau de chat.
+
 ## Notes
 
 - Le poller interroge le serveur toutes les 15 secondes (modifiable via

@@ -1,4 +1,5 @@
 .env
 data/stats.json
+log-shipper/data/
 __pycache__/
 *.pyc

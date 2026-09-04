@@ -1,0 +1,23 @@
+services:
+  log-shipper:
+    image: python:3.12-alpine
+    container_name: factorio-log-shipper
+    working_dir: /app
+    command: ["sh", "-c", "pip install --quiet --no-cache-dir -r requirements.txt && python ship_chat.py"]
+    environment:
+      - LOG_PATH=/factorio-logs/console.log
+      - OFFSET_PATH=/data/offset.txt
+      - POLL_INTERVAL=2
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - ./ship_chat.py:/app/ship_chat.py:ro
+      - ./requirements.txt:/app/requirements.txt:ro
+      # <-- Ajuste le chemin source ci-dessous pour pointer vers le vrai
+      # fichier --console-log de ton serveur Factorio (chemin HOST:conteneur)
+      - /opt/factorio/console.log:/factorio-logs/console.log:ro
+      - ./data:/data
+    restart: unless-stopped

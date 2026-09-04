@@ -3,15 +3,22 @@ services:
     image: python:3.12-alpine
     container_name: factorio-stats-poller
     working_dir: /app
-    command: ["python", "poller.py"]
+    command: ["sh", "-c", "pip install --quiet --no-cache-dir -r requirements.txt && python poller.py"]
     environment:
       - FACTORIO_RCON_HOST=${RCON_HOST}
       - FACTORIO_RCON_PORT=${RCON_PORT:-27015}
       - FACTORIO_RCON_PASSWORD=${RCON_PASSWORD}
       - POLL_INTERVAL=15
       - OUTPUT_PATH=/data/stats.json
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - CHAT_LIMIT=50
     volumes:
       - ./poller/poller.py:/app/poller.py:ro
+      - ./poller/requirements.txt:/app/requirements.txt:ro
       - ./VERSION:/app/VERSION:ro
       - ./data:/data
     restart: unless-stopped

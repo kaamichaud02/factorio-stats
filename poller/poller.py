@@ -9,15 +9,32 @@ import json
 import os
 import socket
 import struct
-import time
 import sys
+import time
 from datetime import datetime, timezone
+
+try:
+    import psycopg2
+except ImportError:
+    psycopg2 = None
 
 RCON_HOST = os.environ.get("FACTORIO_RCON_HOST", "127.0.0.1")
 RCON_PORT = int(os.environ.get("FACTORIO_RCON_PORT", "27015"))
 RCON_PASSWORD = os.environ.get("FACTORIO_RCON_PASSWORD", "")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "15"))
 OUTPUT_PATH = os.environ.get("OUTPUT_PATH", "/data/stats.json")
+
+# Connexion PostgreSQL optionnelle — si POSTGRES_HOST n'est pas défini, le
+# dashboard fonctionne normalement mais sans le panneau de chat (dégradation
+# gracieuse, utile tant que log-shipper n'est pas déployé côté serveur
+# Factorio).
+PG_HOST = os.environ.get("POSTGRES_HOST", "")
+PG_PORT = int(os.environ.get("POSTGRES_PORT", "5432"))
+PG_DB = os.environ.get("POSTGRES_DB", "")
+PG_USER = os.environ.get("POSTGRES_USER", "")
+PG_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "")
+PG_TABLE = os.environ.get("POSTGRES_TABLE", "chat_messages")
+CHAT_LIMIT = int(os.environ.get("CHAT_LIMIT", "50"))
 
 # Lu depuis le fichier VERSION à la racine du projet (bind-mounté avec le
 # reste du repo). Permet de confirmer visuellement, dans le dashboard, que
@@ -101,6 +118,46 @@ class RconError(Exception):
     pass
 
 
+def fetch_chat_messages(limit=CHAT_LIMIT):
+    """Récupère les derniers messages de chat/join/leave depuis
+    PostgreSQL (alimentée par le service log-shipper). Retourne une liste
+    vide (dégradation gracieuse) si PostgreSQL n'est pas configuré ou
+    injoignable, plutôt que de faire échouer tout le relevé."""
+    if psycopg2 is None or not PG_HOST:
+        return []
+    try:
+        conn = psycopg2.connect(
+            host=PG_HOST,
+            port=PG_PORT,
+            dbname=PG_DB,
+            user=PG_USER,
+            password=PG_PASSWORD,
+            connect_timeout=5,
+        )
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT player, message, msg_type, occurred_at "
+                    f"FROM {PG_TABLE} ORDER BY occurred_at DESC LIMIT %s",
+                    (limit,),
+                )
+                rows = cur.fetchall()
+        finally:
+            conn.close()
+        return [
+            {
+                "player": r[0],
+                "message": r[1],
+                "type": r[2],
+                "occurred_at": r[3].isoformat(),
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        print(f"[poller] Erreur lecture chat (Postgres) : {e}", file=sys.stderr, flush=True)
+        return []
+
+
 def _send_packet(sock, request_id, packet_type, body):
     payload = struct.pack("<ii", request_id, packet_type) + body.encode("utf-8") + b"\x00\x00"
     sock.sendall(struct.pack("<i", len(payload)) + payload)
@@ -172,6 +229,8 @@ def poll_once():
         data["top_production"] = []
     if not isinstance(data.get("players"), list):
         data["players"] = []
+
+    data["chat_messages"] = fetch_chat_messages()
 
     cur_tick = data.get("tick")
     cur_produced = data.get("electricity_produced")
