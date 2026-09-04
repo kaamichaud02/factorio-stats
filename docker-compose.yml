@@ -20,6 +20,9 @@ services:
       - HISTORY_MAX_POINTS=288
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - MQTT_ALERT_PREFIX=factorio/alerts
+      - ELECTRICITY_ALERT_MARGIN_PCT=${ELECTRICITY_ALERT_MARGIN_PCT:-100}
+      - ELECTRICITY_ALERT_COOLDOWN=300
     volumes:
       - ./poller/poller.py:/app/poller.py:ro
       - ./poller/requirements.txt:/app/requirements.txt:ro

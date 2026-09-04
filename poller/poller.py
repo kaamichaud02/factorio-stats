@@ -57,6 +57,15 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 NOTIFY_MQTT_TYPES = {"join", "leave", "death", "biter_attack"}
 
+# Alertes proactives publiées sur MQTT (topic factorio/alerts/...) pour
+# être consommées par une automatisation Home Assistant (notif mobile,
+# etc.). Publiées sur le même broker que le chat. Le principe : la mort
+# d'un joueur est retransmise ; l'électricité est surveillée avec un
+# cooldown pour éviter le spam d'alertes répétées.
+MQTT_ALERT_PREFIX = os.environ.get("MQTT_ALERT_PREFIX", "factorio/alerts")
+ELECTRICITY_ALERT_MARGIN_PCT = float(os.environ.get("ELECTRICITY_ALERT_MARGIN_PCT", "100"))
+ELECTRICITY_ALERT_COOLDOWN = int(os.environ.get("ELECTRICITY_ALERT_COOLDOWN", "300"))
+
 # Lu depuis le fichier VERSION à la racine du projet (bind-mounté avec le
 # reste du repo). Permet de confirmer visuellement, dans le dashboard, que
 # le conteneur en cours d'exécution a bien récupéré le dernier code après
@@ -248,6 +257,21 @@ def _save_chat_history():
         print(f"[poller] Erreur sauvegarde historique chat : {e}", file=sys.stderr, flush=True)
 
 
+# Référence au client MQTT connecté, pour pouvoir aussi PUBLIER des
+# alertes (pas seulement s'abonner au chat) depuis la boucle principale.
+_mqtt_client_ref = {"client": None}
+
+
+def publish_mqtt_alert(topic_suffix, payload):
+    client = _mqtt_client_ref.get("client")
+    if client is None:
+        return
+    try:
+        client.publish(f"{MQTT_ALERT_PREFIX}/{topic_suffix}", json.dumps(payload), qos=1)
+    except Exception as e:
+        print(f"[poller] Erreur publication alerte MQTT : {e}", file=sys.stderr, flush=True)
+
+
 def _on_mqtt_message(client, userdata, msg):
     try:
         payload = json.loads(msg.payload.decode("utf-8"))
@@ -263,6 +287,12 @@ def _on_mqtt_message(client, userdata, msg):
         icon = icons.get(msg_type, "ℹ️")
         send_telegram(f"{icon} {payload.get('message', '')}")
 
+    # Forward vers Home Assistant (topic dédié aux alertes) — la mort d'un
+    # joueur est le cas d'usage le plus courant pour déclencher une notif
+    # mobile via une automatisation HA.
+    if msg_type == "death":
+        publish_mqtt_alert("death", payload)
+
 
 def start_mqtt_subscriber():
     if mqtt is None or not MQTT_HOST:
@@ -277,6 +307,7 @@ def start_mqtt_subscriber():
 
         def _on_connect(c, userdata, flags, rc):
             c.subscribe(MQTT_TOPIC, qos=1)
+            _mqtt_client_ref["client"] = c
             print(f"[poller] Abonné à MQTT {MQTT_HOST}:{MQTT_PORT} topic={MQTT_TOPIC}", flush=True)
 
         client.on_connect = _on_connect
@@ -362,6 +393,8 @@ _previous_reading = {
     "research_name": None,
     "rockets_launched": None,
 }
+_last_electricity_alert_ts = 0
+_electricity_alert_active = False
 
 
 def poll_once():
@@ -432,6 +465,31 @@ def poll_once():
     ):
         send_telegram(f"🚀 Fusée lancée ! (total : {cur_rockets})")
     prev["rockets_launched"] = cur_rockets
+
+    # --- Alerte électricité (déficit de production) -------------------
+    global _last_electricity_alert_ts, _electricity_alert_active
+    produced_w = data.get("electricity_produced_watts")
+    consumed_w = data.get("electricity_consumed_watts")
+    if produced_w is not None and consumed_w is not None:
+        deficit = consumed_w > produced_w * (ELECTRICITY_ALERT_MARGIN_PCT / 100.0)
+        now = time.time()
+        if deficit and now - _last_electricity_alert_ts > ELECTRICITY_ALERT_COOLDOWN:
+            _last_electricity_alert_ts = now
+            _electricity_alert_active = True
+            publish_mqtt_alert("electricity", {
+                "status": "deficit",
+                "produced_watts": produced_w,
+                "consumed_watts": consumed_w,
+                "occurred_at": data["last_updated"],
+            })
+        elif not deficit and _electricity_alert_active:
+            _electricity_alert_active = False
+            publish_mqtt_alert("electricity", {
+                "status": "ok",
+                "produced_watts": produced_w,
+                "consumed_watts": consumed_w,
+                "occurred_at": data["last_updated"],
+            })
 
     return data
 

@@ -131,6 +131,25 @@ ajouté, ces événements remontent automatiquement via le même pipeline
 `log-shipper` → MQTT → poller → Telegram, sans configuration
 supplémentaire.
 
+## 7. Alertes proactives Home Assistant (optionnel)
+
+Le poller publie aussi deux types d'alertes sur le broker mosquitto du
+stack `log-shipper` (celui déjà utilisé pour le chat), sur des topics
+dédiés que tu peux consommer avec une automatisation Home Assistant
+(intégration MQTT — ajoute une nouvelle entrée de config pointant vers ce
+broker si ce n'est pas déjà celui que tu utilises) :
+
+- `factorio/alerts/electricity` — publié quand la consommation dépasse la
+  production (payload `{"status": "deficit", ...}`), puis à nouveau quand
+  ça revient à la normale (`{"status": "ok", ...}`). Réglable via
+  `ELECTRICITY_ALERT_MARGIN_PCT` (défaut 100%) et un cooldown de 5 min
+  entre deux alertes consécutives.
+- `factorio/alerts/death` — retransmis à chaque mort de joueur (nécessite
+  `scenario-hooks.lua`, voir section 6).
+
+Exemple d'automatisation HA : trigger sur l'état MQTT de ce topic,
+condition sur `status == deficit`, action `notify.mobile_app_...`.
+
 ## Notes
 
 - Le poller interroge le serveur toutes les 15 secondes (modifiable via
