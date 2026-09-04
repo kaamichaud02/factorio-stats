@@ -114,6 +114,39 @@
     font-variant-numeric: tabular-nums;
   }
   .chat-player { color: var(--accent); font-weight: 600; }
+  .history-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+  }
+  .history-chart-label {
+    font-size: 0.78rem;
+    color: var(--text-dim2);
+    margin-top: 6px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .history-chart-label .current-value { color: var(--accent); font-weight: 600; }
+  .presence-dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    margin-right: 6px;
+    background: var(--text-dim2);
+    vertical-align: middle;
+  }
+  .presence-dot.online { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .gps-tag {
+    display: inline-block;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 0.85em;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+  }
   .footer {
     text-align: center;
     color: var(--text-dim2);
@@ -135,7 +168,7 @@
 </head>
 <body>
 
-<h1>🏭 Factorio — État du serveur</h1>
+<h1><span class="presence-dot" id="presenceDot"></span>🏭 Factorio — État du serveur</h1>
 <div class="subtitle" id="lastUpdated">Chargement…</div>
 
 <div class="error-banner" id="errorBanner"></div>
@@ -173,6 +206,24 @@
     <h2>Top production (items)</h2>
     <div class="production-scroll">
       <table id="productionTable"><tbody></tbody></table>
+    </div>
+  </div>
+
+  <div class="panel" style="grid-column: 1 / -1;">
+    <h2>Historique (dernières 24h)</h2>
+    <div class="history-grid">
+      <div>
+        <svg id="chartPlayers" viewBox="0 0 260 70" width="100%" height="70"></svg>
+        <div class="history-chart-label"><span>Joueurs en ligne</span><span class="current-value" id="chartPlayersCurrent">–</span></div>
+      </div>
+      <div>
+        <svg id="chartEvolution" viewBox="0 0 260 70" width="100%" height="70"></svg>
+        <div class="history-chart-label"><span>Évolution des biters</span><span class="current-value" id="chartEvolutionCurrent">–</span></div>
+      </div>
+      <div>
+        <svg id="chartProduction" viewBox="0 0 260 70" width="100%" height="70"></svg>
+        <div class="history-chart-label"><span>Production totale (items)</span><span class="current-value" id="chartProductionCurrent">–</span></div>
+      </div>
     </div>
   </div>
 
@@ -236,12 +287,67 @@ function formatWatts(w) {
   return Math.round(w) + ' W';
 }
 
+function drawSparkline(svgId, values, color) {
+  const svg = document.getElementById(svgId);
+  const w = 260, h = 70, pad = 4;
+  svg.innerHTML = '';
+  if (!values || values.length < 2) {
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('x', w / 2);
+    text.setAttribute('y', h / 2);
+    text.setAttribute('text-anchor', 'middle');
+    text.setAttribute('fill', 'var(--text-dim2)');
+    text.setAttribute('font-size', '11');
+    text.textContent = 'Pas assez de données';
+    svg.appendChild(text);
+    return;
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const stepX = (w - pad * 2) / (values.length - 1);
+  const points = values.map((v, i) => {
+    const x = pad + i * stepX;
+    const y = h - pad - ((v - min) / range) * (h - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+  polyline.setAttribute('points', points.join(' '));
+  polyline.setAttribute('fill', 'none');
+  polyline.setAttribute('stroke', color);
+  polyline.setAttribute('stroke-width', '2');
+  polyline.setAttribute('stroke-linejoin', 'round');
+  polyline.setAttribute('stroke-linecap', 'round');
+  svg.appendChild(polyline);
+
+  const [lastX, lastY] = points[points.length - 1].split(',');
+  const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  dot.setAttribute('cx', lastX);
+  dot.setAttribute('cy', lastY);
+  dot.setAttribute('r', '3');
+  dot.setAttribute('fill', color);
+  svg.appendChild(dot);
+}
+
+function linkifyMessage(message) {
+  const escaped = escapeHtml(message);
+  return escaped.replace(/\[gps=([-\d.]+),\s*([-\d.]+)(?:,\s*([^\]]+))?\]/g, (match, x, y, surface) => {
+    const label = surface ? `📍 ${x}, ${y} (${surface})` : `📍 ${x}, ${y}`;
+    const copyText = `${x}, ${y}${surface ? ', ' + surface : ''}`;
+    return `<span class="gps-tag" onclick="navigator.clipboard && navigator.clipboard.writeText('${copyText}')" title="Cliquer pour copier les coordonnées">${label}</span>`;
+  });
+}
+
 function render(data) {
   if (data.error) {
     showError('Erreur côté serveur : ' + data.error);
     return;
   }
   hideError();
+
+  // Badge de présence
+  const dot = document.getElementById('presenceDot');
+  dot.classList.toggle('online', (data.online_count ?? 0) > 0);
 
   document.getElementById('lastUpdated').textContent =
     'Dernière mise à jour : ' + new Date(data.last_updated).toLocaleTimeString('fr-CA');
@@ -316,7 +422,7 @@ function render(data) {
       const li = document.createElement('li');
       const time = new Date(m.occurred_at).toLocaleTimeString('fr-CA');
       if (m.type === 'chat') {
-        li.innerHTML = `<span class="chat-time">${time}</span><span class="chat-player">${escapeHtml(m.player || '?')}</span>: ${escapeHtml(m.message)}`;
+        li.innerHTML = `<span class="chat-time">${time}</span><span class="chat-player">${escapeHtml(m.player || '?')}</span>: ${linkifyMessage(m.message)}`;
       } else {
         li.classList.add('system-event');
         li.innerHTML = `<span class="chat-time">${time}</span>${escapeHtml(m.message)}`;
@@ -324,6 +430,23 @@ function render(data) {
       chatList.appendChild(li);
     });
   }
+
+  // Historique / graphiques
+  const history = Array.isArray(data.history) ? data.history : [];
+  const playerValues = history.map(p => p.online_count ?? 0);
+  const evolutionValues = history.map(p => (p.evolution ?? 0) * 100);
+  const productionValues = history.map(p => p.production_total ?? 0);
+
+  drawSparkline('chartPlayers', playerValues, 'var(--accent)');
+  drawSparkline('chartEvolution', evolutionValues, 'var(--red)');
+  drawSparkline('chartProduction', productionValues, 'var(--green)');
+
+  document.getElementById('chartPlayersCurrent').textContent =
+    playerValues.length ? playerValues[playerValues.length - 1] : '–';
+  document.getElementById('chartEvolutionCurrent').textContent =
+    evolutionValues.length ? evolutionValues[evolutionValues.length - 1].toFixed(1) + '%' : '–';
+  document.getElementById('chartProductionCurrent').textContent =
+    productionValues.length ? productionValues[productionValues.length - 1].toLocaleString('fr-CA') : '–';
 }
 
 function escapeHtml(str) {

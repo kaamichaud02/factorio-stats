@@ -37,6 +37,15 @@ MQTT_TOPIC = os.environ.get("MQTT_TOPIC", "factorio/chat")
 CHAT_LIMIT = int(os.environ.get("CHAT_LIMIT", "50"))
 CHAT_HISTORY_PATH = os.environ.get("CHAT_HISTORY_PATH", "/data/chat_history.json")
 
+# Historique décimé pour les graphiques du dashboard (joueurs, évolution
+# biters, production). On n'enregistre un point que toutes les
+# HISTORY_INTERVAL secondes, avec une taille maximale HISTORY_MAX_POINTS,
+# pour garder un fichier léger tout en couvrant une longue période (par
+# défaut : 1 point / 5 min, 288 points = 24h).
+HISTORY_PATH = os.environ.get("HISTORY_PATH", "/data/history.json")
+HISTORY_INTERVAL = int(os.environ.get("HISTORY_INTERVAL", "300"))
+HISTORY_MAX_POINTS = int(os.environ.get("HISTORY_MAX_POINTS", "288"))
+
 # Lu depuis le fichier VERSION à la racine du projet (bind-mounté avec le
 # reste du repo). Permet de confirmer visuellement, dans le dashboard, que
 # le conteneur en cours d'exécution a bien récupéré le dernier code après
@@ -113,6 +122,62 @@ LUA_QUERY = (
     "electricity_consumed=electricity_consumed,top_production=top} "
     "rcon.print(helpers.table_to_json(data)) end build()"
 )
+
+
+# --- Historique décimé (pour les graphiques) -------------------------
+_history_lock = threading.Lock()
+_history_points = deque(maxlen=HISTORY_MAX_POINTS)
+_last_history_ts = 0
+
+
+def _load_history():
+    try:
+        with open(HISTORY_PATH) as f:
+            items = json.load(f)
+        with _history_lock:
+            _history_points.extend(items[-HISTORY_MAX_POINTS:])
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+
+def _save_history():
+    try:
+        tmp_path = HISTORY_PATH + ".tmp"
+        with _history_lock:
+            items = list(_history_points)
+        with open(tmp_path, "w") as f:
+            json.dump(items, f)
+        os.replace(tmp_path, HISTORY_PATH)
+    except Exception as e:
+        print(f"[poller] Erreur sauvegarde historique : {e}", file=sys.stderr, flush=True)
+
+
+def maybe_record_history(data):
+    """Ajoute un point d'historique décimé (au plus 1 par HISTORY_INTERVAL
+    secondes) à partir du relevé courant."""
+    global _last_history_ts
+    now = time.time()
+    if now - _last_history_ts < HISTORY_INTERVAL:
+        return
+    _last_history_ts = now
+
+    production_total = sum(
+        item.get("count", 0) for item in data.get("top_production", [])
+    )
+    point = {
+        "ts": data.get("last_updated"),
+        "online_count": data.get("online_count", 0),
+        "evolution": data.get("evolution"),
+        "production_total": production_total,
+    }
+    with _history_lock:
+        _history_points.append(point)
+    _save_history()
+
+
+def get_history():
+    with _history_lock:
+        return list(_history_points)
 
 
 class RconError(Exception):
@@ -272,6 +337,8 @@ def poll_once():
         data["players"] = []
 
     data["chat_messages"] = get_chat_messages()
+    maybe_record_history(data)
+    data["history"] = get_history()
 
     cur_tick = data.get("tick")
     cur_produced = data.get("electricity_produced")
@@ -307,6 +374,7 @@ def main():
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 
     start_mqtt_subscriber()
+    _load_history()
 
     while True:
         try:
