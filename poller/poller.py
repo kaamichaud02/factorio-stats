@@ -383,6 +383,8 @@ _previous_reading = {
     "techs_done": None,
     "research_name": None,
     "rockets_launched": None,
+    "last_produced_watts": None,
+    "last_consumed_watts": None,
 }
 _last_electricity_alert_ts = 0
 _electricity_alert_active = False
@@ -419,16 +421,39 @@ def poll_once():
         and cur_tick > prev["tick"]
     ):
         dt_seconds = (cur_tick - prev["tick"]) / 60.0  # 60 ticks/seconde
-        if dt_seconds > 0:
-            data["electricity_produced_watts"] = max(
-                0, (cur_produced - prev["produced"]) / dt_seconds
-            )
-            data["electricity_consumed_watts"] = max(
-                0, (cur_consumed - prev["consumed"]) / dt_seconds
-            )
+        # Seuil minimal pour éviter une division par un delta quasi nul
+        # (ex: redémarrage rapide du conteneur, cycles de sondage
+        # rapprochés) qui produirait un pic de Watts complètement
+        # aberrant. En dessous de ce seuil, on garde la dernière valeur
+        # connue plutôt que d'afficher un chiffre absurde.
+        MIN_DT_SECONDS = 5
+        # Clamp de sécurité supplémentaire : une centrale électrique de
+        # jeu ne dépasse jamais des centaines de GW en pratique, donc tout
+        # calcul au-delà signale un artefact plutôt qu'une vraie valeur.
+        MAX_PLAUSIBLE_WATTS = 500_000_000_000  # 500 GW
+        if dt_seconds >= MIN_DT_SECONDS:
+            produced_watts = max(0, (cur_produced - prev["produced"]) / dt_seconds)
+            consumed_watts = max(0, (cur_consumed - prev["consumed"]) / dt_seconds)
+            if produced_watts <= MAX_PLAUSIBLE_WATTS and consumed_watts <= MAX_PLAUSIBLE_WATTS:
+                data["electricity_produced_watts"] = produced_watts
+                data["electricity_consumed_watts"] = consumed_watts
+            else:
+                print(
+                    f"[poller] Valeur électrique aberrante ignorée "
+                    f"(produit={produced_watts}, consommé={consumed_watts}, dt={dt_seconds}s)",
+                    file=sys.stderr, flush=True,
+                )
+                data["electricity_produced_watts"] = _previous_reading.get("last_produced_watts")
+                data["electricity_consumed_watts"] = _previous_reading.get("last_consumed_watts")
+        else:
+            data["electricity_produced_watts"] = _previous_reading.get("last_produced_watts")
+            data["electricity_consumed_watts"] = _previous_reading.get("last_consumed_watts")
     else:
         data["electricity_produced_watts"] = None
         data["electricity_consumed_watts"] = None
+
+    _previous_reading["last_produced_watts"] = data.get("electricity_produced_watts")
+    _previous_reading["last_consumed_watts"] = data.get("electricity_consumed_watts")
 
     prev["tick"] = cur_tick
     prev["produced"] = cur_produced
