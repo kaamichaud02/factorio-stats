@@ -97,7 +97,7 @@
   table td { padding: 5px 0; border-bottom: 1px solid var(--panel-border); }
   table td:last-child { text-align: right; color: var(--accent); font-variant-numeric: tabular-nums; }
   .production-scroll { max-height: 420px; overflow-y: auto; }
-  .chat-scroll { max-height: 360px; overflow-y: auto; }
+  .chat-scroll { max-height: 180px; overflow-y: auto; }
   .chat-list { list-style: none; padding: 0; margin: 0; }
   .chat-list li {
     padding: 6px 0;
@@ -142,6 +142,13 @@
 
 <div class="grid">
 
+  <div class="panel" style="grid-column: 1 / -1;">
+    <h2>Chat en jeu</h2>
+    <div class="chat-scroll">
+      <ul class="chat-list" id="chatList"></ul>
+    </div>
+  </div>
+
   <div class="panel">
     <h2>Joueurs en ligne</h2>
     <div class="big-number" id="onlineCount">–</div>
@@ -166,13 +173,6 @@
     <h2>Top production (items)</h2>
     <div class="production-scroll">
       <table id="productionTable"><tbody></tbody></table>
-    </div>
-  </div>
-
-  <div class="panel" style="grid-column: 1 / -1;">
-    <h2>Chat en jeu</h2>
-    <div class="chat-scroll">
-      <ul class="chat-list" id="chatList"></ul>
     </div>
   </div>
 
