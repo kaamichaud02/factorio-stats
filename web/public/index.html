@@ -307,6 +307,9 @@
       <label>Quantité
         <input type="number" id="giveItemCount" value="50" min="1" max="1000">
       </label>
+      <label>Donné par
+        <input type="text" id="giveItemGiver" autocomplete="off" placeholder="Ton nom">
+      </label>
       <label>Jeton
         <input type="password" id="giveItemToken" autocomplete="off" placeholder="ACTION_TOKEN">
       </label>
@@ -597,6 +600,8 @@ function escapeHtml(str) {
 // chaque envoi.
 const giveItemTokenInput = document.getElementById('giveItemToken');
 giveItemTokenInput.value = sessionStorage.getItem('factorioActionToken') || '';
+const giveItemGiverInput = document.getElementById('giveItemGiver');
+giveItemGiverInput.value = sessionStorage.getItem('factorioActionGiver') || '';
 
 // Délégation d'événement sur la liste des joueurs (recréée à chaque
 // rafraîchissement) — un seul listener suffit pour tous les boutons
@@ -617,6 +622,7 @@ document.getElementById('giveItemBtn').addEventListener('click', async () => {
   const item = document.getElementById('giveItemName').value.trim();
   const count = parseInt(document.getElementById('giveItemCount').value, 10);
   const token = giveItemTokenInput.value;
+  const giver = giveItemGiverInput.value.trim();
 
   resultEl.textContent = '';
   resultEl.className = 'give-item-result';
@@ -628,6 +634,7 @@ document.getElementById('giveItemBtn').addEventListener('click', async () => {
   }
 
   sessionStorage.setItem('factorioActionToken', token);
+  sessionStorage.setItem('factorioActionGiver', giver);
   btn.disabled = true;
   btn.textContent = 'Envoi...';
 
@@ -635,7 +642,7 @@ document.getElementById('giveItemBtn').addEventListener('click', async () => {
     const res = await fetch('/api/give-item', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ player, item, count, token }),
+      body: JSON.stringify({ player, item, count, token, giver }),
     });
     const body = await res.json();
     if (res.ok && body.ok) {

@@ -351,7 +351,14 @@ class _ActionHandler(BaseHTTPRequestHandler):
             player = str(body.get("player", ""))
             item = str(body.get("item", ""))
             count = int(body.get("count", 0))
+            # Nettoyage simple pour l'affichage (log + Telegram) — jamais
+            # inséré dans une commande Lua, donc pas besoin d'une regex
+            # aussi stricte que pour le nom d'objet.
+            giver = str(body.get("giver", "")).strip()[:40] or "quelqu'un"
+            giver = re.sub(r"[\r\n\t]", " ", giver)
             _give_item(player, item, count)
+            print(f"[action-api] {giver} a donné {count} × {item} à {player}", flush=True)
+            send_telegram(f"🎁 {giver} a donné {count} × {item} à {player}")
             self._send_json(200, {"ok": True})
         except ValueError as e:
             self._send_json(400, {"ok": False, "error": str(e)})
