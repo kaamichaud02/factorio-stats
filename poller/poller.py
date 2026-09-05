@@ -80,6 +80,10 @@ ACTION_TOKEN = os.environ.get("ACTION_TOKEN", "")
 ACTION_HTTP_PORT = int(os.environ.get("ACTION_HTTP_PORT", "8091"))
 ACTION_MAX_COUNT = int(os.environ.get("ACTION_MAX_COUNT", "1000"))
 ACTION_COOLDOWN_SECONDS = float(os.environ.get("ACTION_COOLDOWN_SECONDS", "2"))
+# Cooldown par JOUEUR (indépendant du cooldown global anti-spam ci-dessus)
+# — empêche de redonner un objet au même joueur avant l'expiration de ce
+# délai, peu importe qui déclenche l'action.
+PLAYER_ACTION_COOLDOWN_SECONDS = float(os.environ.get("PLAYER_ACTION_COOLDOWN_SECONDS", "7200"))
 # Nom d'objet Factorio : lettres minuscules, chiffres, tirets uniquement.
 _ITEM_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9\-]{0,63}$")
 
@@ -266,6 +270,8 @@ def send_telegram(text):
 # --- Serveur HTTP d'actions (donner un objet à un joueur) -------------
 _last_action_ts = 0
 _action_lock = threading.Lock()
+_player_last_action_lock = threading.Lock()
+_player_last_action = {}
 
 
 def _give_item(player, item, count):
@@ -278,12 +284,23 @@ def _give_item(player, item, count):
     if not isinstance(count, int) or not (1 <= count <= ACTION_MAX_COUNT):
         raise ValueError(f"Quantité invalide (1 à {ACTION_MAX_COUNT})")
 
+    with _player_last_action_lock:
+        now = time.time()
+        last = _player_last_action.get(player)
+        if last is not None and now - last < PLAYER_ACTION_COOLDOWN_SECONDS:
+            remaining = int(PLAYER_ACTION_COOLDOWN_SECONDS - (now - last))
+            minutes = remaining // 60
+            raise ValueError(f"{player} a déjà reçu un objet récemment — réessaie dans {minutes} min")
+
     # player validé contre la liste des joueurs en ligne (pas de guillemets
     # ni caractères spéciaux possibles) et item validé par regex stricte :
     # aucune valeur ici ne peut contenir de quoi s'échapper de la chaîne
     # Lua construite ci-dessous.
     command = f'/c game.players["{player}"].insert{{name="{item}", count={count}}}'
     rcon_command(command)
+
+    with _player_last_action_lock:
+        _player_last_action[player] = time.time()
 
 
 class _ActionHandler(BaseHTTPRequestHandler):

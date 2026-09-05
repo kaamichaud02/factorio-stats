@@ -27,6 +27,7 @@ services:
       - ACTION_HTTP_PORT=8091
       - ACTION_MAX_COUNT=${ACTION_MAX_COUNT:-1000}
       - ACTION_COOLDOWN_SECONDS=2
+      - PLAYER_ACTION_COOLDOWN_SECONDS=${PLAYER_ACTION_COOLDOWN_SECONDS:-7200}
     volumes:
       - ./poller/poller.py:/app/poller.py:ro
       - ./poller/requirements.txt:/app/requirements.txt:ro

@@ -67,6 +67,17 @@
   }
   .player-list li:last-child { border-bottom: none; }
   .player-time { color: var(--text-dim2); font-size: 0.82rem; }
+  .player-name-group { display: flex; align-items: center; gap: 8px; }
+  .give-item-quick-btn {
+    background: none;
+    border: 1px solid var(--panel-border);
+    color: var(--accent);
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+  .give-item-quick-btn:hover { background: var(--accent-soft); }
   .empty { color: var(--text-dim2); font-style: italic; font-size: 0.9rem; }
   .big-number {
     font-size: 2.2rem;
@@ -452,7 +463,8 @@ function render(data) {
   } else {
     data.players.forEach(p => {
       const li = document.createElement('li');
-      li.innerHTML = `<span>${p.admin ? '⭐ ' : ''}${escapeHtml(p.name)}</span>
+      li.innerHTML = `<span class="player-name-group">${p.admin ? '⭐ ' : ''}${escapeHtml(p.name)}
+                       <button class="give-item-quick-btn" data-player="${escapeHtml(p.name)}">Donner un objet</button></span>
                        <span class="player-time">${formatTicksAsTime(p.online_time)}</span>`;
       list.appendChild(li);
     });
@@ -585,6 +597,18 @@ function escapeHtml(str) {
 // chaque envoi.
 const giveItemTokenInput = document.getElementById('giveItemToken');
 giveItemTokenInput.value = sessionStorage.getItem('factorioActionToken') || '';
+
+// Délégation d'événement sur la liste des joueurs (recréée à chaque
+// rafraîchissement) — un seul listener suffit pour tous les boutons
+// "Donner un objet" présents et futurs.
+document.getElementById('playerList').addEventListener('click', (e) => {
+  const btn = e.target.closest('.give-item-quick-btn');
+  if (!btn) return;
+  const playerSelect = document.getElementById('giveItemPlayer');
+  playerSelect.value = btn.dataset.player;
+  document.getElementById('giveItemName').focus();
+  document.querySelector('.give-item-form').closest('.panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
 
 document.getElementById('giveItemBtn').addEventListener('click', async () => {
   const btn = document.getElementById('giveItemBtn');
