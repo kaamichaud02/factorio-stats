@@ -9,6 +9,8 @@ log-shipper) pour inclure les derniers messages de chat/join/leave.
 
 import json
 import os
+import re
+import hmac
 import socket
 import struct
 import sys
@@ -18,6 +20,7 @@ import urllib.request
 import urllib.parse
 from collections import deque
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 try:
     import paho.mqtt.client as mqtt
@@ -67,6 +70,18 @@ NOTIFY_MQTT_TYPES = {"join", "leave", "chat"}
 MQTT_ALERT_PREFIX = os.environ.get("MQTT_ALERT_PREFIX", "factorio/alerts")
 ELECTRICITY_ALERT_MARGIN_PCT = float(os.environ.get("ELECTRICITY_ALERT_MARGIN_PCT", "100"))
 ELECTRICITY_ALERT_COOLDOWN = int(os.environ.get("ELECTRICITY_ALERT_COOLDOWN", "300"))
+
+# Action "donner un objet" (optionnel) — désactivée tant que ACTION_TOKEN
+# n'est pas défini. Expose un petit serveur HTTP interne (non publié sur
+# l'hôte) que nginx proxifie via /api/*, pour permettre au dashboard web
+# d'exécuter une commande RCON ciblée et validée, plutôt que d'exposer
+# RCON brut au navigateur.
+ACTION_TOKEN = os.environ.get("ACTION_TOKEN", "")
+ACTION_HTTP_PORT = int(os.environ.get("ACTION_HTTP_PORT", "8091"))
+ACTION_MAX_COUNT = int(os.environ.get("ACTION_MAX_COUNT", "1000"))
+ACTION_COOLDOWN_SECONDS = float(os.environ.get("ACTION_COOLDOWN_SECONDS", "2"))
+# Nom d'objet Factorio : lettres minuscules, chiffres, tirets uniquement.
+_ITEM_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9\-]{0,63}$")
 
 # Lu depuis le fichier VERSION à la racine du projet (bind-mounté avec le
 # reste du repo). Permet de confirmer visuellement, dans le dashboard, que
@@ -213,6 +228,24 @@ class RconError(Exception):
     pass
 
 
+# Liste des joueurs actuellement en ligne (mise à jour à chaque cycle de
+# sondage), utilisée pour valider les requêtes reçues par le serveur
+# d'actions HTTP — on ne cible que des joueurs réellement connectés.
+_online_players_lock = threading.Lock()
+_online_player_names = set()
+
+
+def set_online_players(names):
+    with _online_players_lock:
+        _online_player_names.clear()
+        _online_player_names.update(names)
+
+
+def is_online_player(name):
+    with _online_players_lock:
+        return name in _online_player_names
+
+
 def send_telegram(text):
     """Envoie une notification Telegram si configuré. Best-effort : une
     erreur d'envoi ne doit jamais faire planter le poller."""
@@ -228,6 +261,100 @@ def send_telegram(text):
         urllib.request.urlopen(req, timeout=10)
     except Exception as e:
         print(f"[poller] Erreur envoi Telegram : {e}", file=sys.stderr, flush=True)
+
+
+# --- Serveur HTTP d'actions (donner un objet à un joueur) -------------
+_last_action_ts = 0
+_action_lock = threading.Lock()
+
+
+def _give_item(player, item, count):
+    """Exécute /c game.players[...].insert{...} via RCON, après validation
+    stricte de chaque paramètre. Lève ValueError sur entrée invalide."""
+    if not is_online_player(player):
+        raise ValueError("Joueur non trouvé parmi les joueurs en ligne")
+    if not _ITEM_NAME_RE.match(item):
+        raise ValueError("Nom d'objet invalide")
+    if not isinstance(count, int) or not (1 <= count <= ACTION_MAX_COUNT):
+        raise ValueError(f"Quantité invalide (1 à {ACTION_MAX_COUNT})")
+
+    # player validé contre la liste des joueurs en ligne (pas de guillemets
+    # ni caractères spéciaux possibles) et item validé par regex stricte :
+    # aucune valeur ici ne peut contenir de quoi s'échapper de la chaîne
+    # Lua construite ci-dessous.
+    command = f'/c game.players["{player}"].insert{{name="{item}", count={count}}}'
+    rcon_command(command)
+
+
+class _ActionHandler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        print(f"[action-api] {self.address_string()} - {fmt % args}", flush=True)
+
+    def _send_json(self, status, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        global _last_action_ts
+
+        if not ACTION_TOKEN:
+            self._send_json(403, {"ok": False, "error": "Fonctionnalité désactivée"})
+            return
+        if self.path != "/give-item":
+            self._send_json(404, {"ok": False, "error": "Route inconnue"})
+            return
+
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b"{}"
+            body = json.loads(raw.decode("utf-8"))
+        except (ValueError, json.JSONDecodeError):
+            self._send_json(400, {"ok": False, "error": "JSON invalide"})
+            return
+
+        # Comparaison à temps constant pour limiter les attaques par
+        # timing sur le token.
+        provided_token = str(body.get("token", ""))
+        if not hmac.compare_digest(provided_token, ACTION_TOKEN):
+            self._send_json(403, {"ok": False, "error": "Jeton invalide"})
+            return
+
+        with _action_lock:
+            now = time.time()
+            if now - _last_action_ts < ACTION_COOLDOWN_SECONDS:
+                self._send_json(429, {"ok": False, "error": "Trop de requêtes, réessaie dans un instant"})
+                return
+            _last_action_ts = now
+
+        try:
+            player = str(body.get("player", ""))
+            item = str(body.get("item", ""))
+            count = int(body.get("count", 0))
+            _give_item(player, item, count)
+            self._send_json(200, {"ok": True})
+        except ValueError as e:
+            self._send_json(400, {"ok": False, "error": str(e)})
+        except Exception as e:
+            print(f"[action-api] Erreur : {e}", file=sys.stderr, flush=True)
+            self._send_json(500, {"ok": False, "error": "Erreur serveur"})
+
+
+def start_action_server():
+    if not ACTION_TOKEN:
+        print("[poller] ACTION_TOKEN non configuré, action 'donner un objet' désactivée", flush=True)
+        return
+
+    def _run():
+        server = ThreadingHTTPServer(("0.0.0.0", ACTION_HTTP_PORT), _ActionHandler)
+        print(f"[poller] Serveur d'actions démarré sur le port {ACTION_HTTP_PORT}", flush=True)
+        server.serve_forever()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
 
 
 # --- Chat MQTT -------------------------------------------------------
@@ -420,6 +547,8 @@ def poll_once():
     if not isinstance(data.get("players"), list):
         data["players"] = []
 
+    set_online_players(p.get("name") for p in data["players"])
+
     data["chat_messages"] = get_chat_messages()
     maybe_record_history(data)
     data["history"] = get_history()
@@ -563,6 +692,7 @@ def main():
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 
     start_mqtt_subscriber()
+    start_action_server()
     _load_history()
 
     while True:

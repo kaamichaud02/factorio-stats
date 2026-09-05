@@ -141,6 +141,33 @@ utilises) :
 Exemple d'automatisation HA : trigger sur l'état MQTT de ce topic,
 condition sur `status == deficit`, action `notify.mobile_app_...`.
 
+## 8. Donner un objet à un joueur (optionnel)
+
+Le dashboard peut exécuter `game.players[nom].insert{name=item, count=n}`
+sur un joueur actuellement en ligne, via un petit formulaire web — sans
+exposer RCON brut au navigateur. Un serveur HTTP interne tourne dans le
+conteneur `poller` (jamais publié directement sur l'hôte), et nginx en
+fait un reverse proxy sous `/api/`.
+
+**Sécurité — à lire avant d'activer :**
+- Défini `ACTION_TOKEN` avec une valeur longue et aléatoire (ex:
+  `openssl rand -hex 24`) dans le `.env`. Tant que cette variable est
+  vide, la fonctionnalité est **désactivée** côté serveur (le formulaire
+  reste visible mais renvoie une erreur).
+- Le nom du joueur ciblé est validé contre la liste des joueurs
+  **actuellement en ligne** (impossible de cibler un nom arbitraire), et
+  le nom d'objet est validé par expression régulière stricte
+  (minuscules/chiffres/tirets uniquement) pour empêcher toute injection
+  dans la commande Lua construite côté serveur.
+- Si ce dashboard est exposé publiquement (voir section 4), ce jeton
+  devient la seule protection contre un usage abusif — considère aussi le
+  restreindre via Cloudflare Access en plus.
+
+Configure `ACTION_TOKEN` (et optionnellement `ACTION_MAX_COUNT`, défaut
+1000) dans le `.env`, redéploie, puis colle ce même jeton dans le champ
+"Jeton" du formulaire sur le dashboard (gardé en mémoire de session dans
+le navigateur, jamais transmis ailleurs qu'à ce serveur).
+
 ## Notes
 
 - Le poller interroge le serveur toutes les 15 secondes (modifiable via

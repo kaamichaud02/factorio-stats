@@ -156,6 +156,43 @@
   }
   .science-stats .stat-label { color: var(--text-dim2); margin-right: 6px; }
   .science-stats .stat-value { color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .give-item-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: end;
+  }
+  .give-item-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.8rem;
+    color: var(--text-dim2);
+  }
+  .give-item-form input, .give-item-form select {
+    background: var(--bg);
+    border: 1px solid var(--panel-border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 0.9rem;
+  }
+  .give-item-form input[type="number"] { width: 90px; }
+  .give-item-form input[type="text"], .give-item-form select { width: 160px; }
+  .give-item-form button {
+    background: var(--accent);
+    color: #1a1200;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 18px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  .give-item-form button:disabled { opacity: 0.5; cursor: default; }
+  .give-item-result { margin-top: 10px; font-size: 0.85rem; }
+  .give-item-result.success { color: var(--green); }
+  .give-item-result.error { color: var(--red); }
   .footer {
     text-align: center;
     color: var(--text-dim2);
@@ -245,6 +282,26 @@
         <div class="history-chart-label"><span>Production totale (items)</span><span class="current-value" id="chartProductionCurrent">–</span></div>
       </div>
     </div>
+  </div>
+
+  <div class="panel" style="grid-column: 1 / -1;">
+    <h2>Donner un objet</h2>
+    <div class="give-item-form">
+      <label>Joueur
+        <select id="giveItemPlayer"></select>
+      </label>
+      <label>Objet
+        <input type="text" id="giveItemName" value="express-loader" autocomplete="off">
+      </label>
+      <label>Quantité
+        <input type="number" id="giveItemCount" value="50" min="1" max="1000">
+      </label>
+      <label>Jeton
+        <input type="password" id="giveItemToken" autocomplete="off" placeholder="ACTION_TOKEN">
+      </label>
+      <button id="giveItemBtn">Envoyer</button>
+    </div>
+    <div id="giveItemResult" class="give-item-result"></div>
   </div>
 
 </div>
@@ -401,6 +458,29 @@ function render(data) {
     });
   }
 
+  // Menu déroulant du formulaire "Donner un objet" — on préserve la
+  // sélection courante si le joueur choisi est toujours en ligne.
+  const playerSelect = document.getElementById('giveItemPlayer');
+  const previousSelection = playerSelect.value;
+  playerSelect.innerHTML = '';
+  const onlineNames = Array.isArray(data.players) ? data.players.map(p => p.name) : [];
+  if (onlineNames.length === 0) {
+    const opt = document.createElement('option');
+    opt.textContent = 'Aucun joueur en ligne';
+    opt.disabled = true;
+    playerSelect.appendChild(opt);
+  } else {
+    onlineNames.forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      playerSelect.appendChild(opt);
+    });
+    if (onlineNames.includes(previousSelection)) {
+      playerSelect.value = previousSelection;
+    }
+  }
+
   // Recherche
   const researchName = document.getElementById('researchName');
   const researchBar = document.getElementById('researchBar');
@@ -498,6 +578,57 @@ function escapeHtml(str) {
   div.textContent = str;
   return div.innerHTML;
 }
+
+// Formulaire "Donner un objet" — le jeton est gardé en sessionStorage
+// (uniquement pour la durée de l'onglet ouvert, jamais envoyé ailleurs
+// qu'à /api/give-item sur ce même site) pour éviter de le retaper à
+// chaque envoi.
+const giveItemTokenInput = document.getElementById('giveItemToken');
+giveItemTokenInput.value = sessionStorage.getItem('factorioActionToken') || '';
+
+document.getElementById('giveItemBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('giveItemBtn');
+  const resultEl = document.getElementById('giveItemResult');
+  const player = document.getElementById('giveItemPlayer').value;
+  const item = document.getElementById('giveItemName').value.trim();
+  const count = parseInt(document.getElementById('giveItemCount').value, 10);
+  const token = giveItemTokenInput.value;
+
+  resultEl.textContent = '';
+  resultEl.className = 'give-item-result';
+
+  if (!player) {
+    resultEl.textContent = 'Aucun joueur sélectionné.';
+    resultEl.className = 'give-item-result error';
+    return;
+  }
+
+  sessionStorage.setItem('factorioActionToken', token);
+  btn.disabled = true;
+  btn.textContent = 'Envoi...';
+
+  try {
+    const res = await fetch('/api/give-item', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ player, item, count, token }),
+    });
+    const body = await res.json();
+    if (res.ok && body.ok) {
+      resultEl.textContent = `✅ ${count} × ${item} envoyé(s) à ${player}.`;
+      resultEl.className = 'give-item-result success';
+    } else {
+      resultEl.textContent = `❌ ${body.error || 'Erreur inconnue'}`;
+      resultEl.className = 'give-item-result error';
+    }
+  } catch (e) {
+    resultEl.textContent = '❌ Erreur réseau';
+    resultEl.className = 'give-item-result error';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Envoyer';
+  }
+});
 
 fetchStats();
 setInterval(fetchStats, 15000);
