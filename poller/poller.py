@@ -297,7 +297,7 @@ def _give_item(player, item, count):
     # aucune valeur ici ne peut contenir de quoi s'échapper de la chaîne
     # Lua construite ci-dessous.
     command = f'/c game.players["{player}"].insert{{name="{item}", count={count}}}'
-    rcon_command(command)
+    rcon_command(command, require_output=False)
 
     with _player_last_action_lock:
         _player_last_action[player] = time.time()
@@ -504,7 +504,7 @@ def _recv_exact(sock, n):
     return buf
 
 
-def rcon_command(command):
+def rcon_command(command, require_output=True):
     with socket.create_connection((RCON_HOST, RCON_PORT), timeout=10) as sock:
         # Auth
         _send_packet(sock, 1, SERVERDATA_AUTH, RCON_PASSWORD)
@@ -526,7 +526,10 @@ def rcon_command(command):
         except (socket.timeout, RconError):
             pass
 
-        if not collected:
+        # require_output=False pour les commandes qui n'affichent rien par
+        # conception (ex: insert{} sans rcon.print) — une réponse vide y
+        # est normale et signifie succès, pas une erreur.
+        if require_output and not collected:
             raise RconError("Aucune réponse reçue du serveur (commande sans sortie)")
         return "".join(collected)
 
