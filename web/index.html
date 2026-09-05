@@ -198,6 +198,11 @@
   </div>
 
   <div class="panel">
+    <h2>Fusées lancées</h2>
+    <div class="big-number" id="rocketsLaunched">–</div>
+  </div>
+
+  <div class="panel">
     <h2>Électricité</h2>
     <div class="big-number" id="electricityPct">–</div>
     <div class="bar-bg"><div class="bar-fill evolution" id="electricityBar" style="width:0%"></div></div>
@@ -381,6 +386,8 @@ function render(data) {
 
   // Joueurs
   document.getElementById('onlineCount').textContent = data.online_count ?? 0;
+  document.getElementById('rocketsLaunched').textContent =
+    (data.rockets_launched ?? 0).toLocaleString('fr-CA');
   const list = document.getElementById('playerList');
   list.innerHTML = '';
   if (!Array.isArray(data.players) || data.players.length === 0) {
