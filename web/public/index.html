@@ -392,6 +392,34 @@
     </div>
   </div>
 
+  <div class="panel" style="grid-column: 1 / -1;">
+    <h2>Métriques du jeu</h2>
+    <div class="science-stats">
+      <div><span class="stat-label">Entités totales :</span><span class="stat-value" id="metricEntities">–</span></div>
+      <div><span class="stat-label">Trains actifs :</span><span class="stat-value" id="metricTrains">–</span></div>
+      <div><span class="stat-label">Robots :</span><span class="stat-value" id="metricRobots">–</span></div>
+      <div><span class="stat-label">Circuits :</span><span class="stat-value" id="metricCircuits">–</span></div>
+      <div><span class="stat-label">Constructions en attente :</span><span class="stat-value" id="metricGhosts">–</span></div>
+    </div>
+  </div>
+
+  <div class="panel" style="grid-column: 1 / -1;">
+    <h2>Ressources serveur (hôte)</h2>
+    <div id="hostMetricsUnavailable" class="empty" style="display:none;">
+      Aucune donnée — le service host-metrics n'est pas déployé ou pas encore connecté.
+    </div>
+    <div id="hostMetricsContent">
+      <svg id="chartCpu" viewBox="0 0 700 90" width="100%" height="90"></svg>
+      <div class="science-stats">
+        <div><span class="stat-label">CPU :</span><span class="stat-value" id="hostCpu">–</span></div>
+        <div><span class="stat-label">RAM :</span><span class="stat-value" id="hostMem">–</span></div>
+        <div><span class="stat-label">Charge (1/5/15 min) :</span><span class="stat-value" id="hostLoad">–</span></div>
+        <div><span class="stat-label">Disque lecture :</span><span class="stat-value" id="hostDiskRead">–</span></div>
+        <div><span class="stat-label">Disque écriture :</span><span class="stat-value" id="hostDiskWrite">–</span></div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 </div>
@@ -677,6 +705,51 @@ function render(data) {
     document.getElementById('upsAverage').textContent = '–';
     document.getElementById('upsMin').textContent = '–';
   }
+
+  // Métriques du jeu (via RCON)
+  document.getElementById('metricEntities').textContent =
+    data.total_entities != null ? data.total_entities.toLocaleString('fr-CA') : '–';
+  document.getElementById('metricTrains').textContent =
+    data.active_trains != null ? data.active_trains.toLocaleString('fr-CA') : '–';
+  document.getElementById('metricRobots').textContent =
+    data.robots != null ? data.robots.toLocaleString('fr-CA') : '–';
+  document.getElementById('metricCircuits').textContent =
+    data.circuit_entities != null ? data.circuit_entities.toLocaleString('fr-CA') : '–';
+  document.getElementById('metricGhosts').textContent =
+    data.pending_ghosts != null ? data.pending_ghosts.toLocaleString('fr-CA') : '–';
+
+  // Ressources serveur (hôte) — via l'agent host-metrics (MQTT)
+  const hm = data.host_metrics;
+  const hmUnavailable = document.getElementById('hostMetricsUnavailable');
+  const hmContent = document.getElementById('hostMetricsContent');
+  if (!hm) {
+    hmUnavailable.style.display = 'block';
+    hmContent.style.display = 'none';
+  } else {
+    hmUnavailable.style.display = 'none';
+    hmContent.style.display = 'block';
+    document.getElementById('hostCpu').textContent =
+      hm.cpu_percent != null ? hm.cpu_percent.toFixed(1) + ' %' : '–';
+    document.getElementById('hostMem').textContent =
+      (hm.mem_percent != null && hm.mem_used_gb != null && hm.mem_total_gb != null)
+        ? `${hm.mem_percent.toFixed(1)} % (${hm.mem_used_gb.toFixed(1)} / ${hm.mem_total_gb.toFixed(1)} Go)`
+        : '–';
+    document.getElementById('hostLoad').textContent =
+      (hm.load1 != null) ? `${hm.load1.toFixed(2)} / ${hm.load5.toFixed(2)} / ${hm.load15.toFixed(2)}` : '–';
+    document.getElementById('hostDiskRead').textContent =
+      hm.disk_read_kbps != null ? formatKbps(hm.disk_read_kbps) : '–';
+    document.getElementById('hostDiskWrite').textContent =
+      hm.disk_write_kbps != null ? formatKbps(hm.disk_write_kbps) : '–';
+
+    const hmHistory = Array.isArray(data.host_metrics_history) ? data.host_metrics_history : [];
+    const cpuValues = hmHistory.map(h => h.cpu_percent).filter(v => v != null);
+    drawSparkline('chartCpu', cpuValues, 'var(--red)');
+  }
+}
+
+function formatKbps(kbps) {
+  if (kbps >= 1024) return (kbps / 1024).toFixed(1) + ' Mo/s';
+  return kbps.toFixed(0) + ' Ko/s';
 }
 
 function escapeHtml(str) {

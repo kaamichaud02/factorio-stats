@@ -13,6 +13,9 @@ services:
       - MQTT_HOST=${MQTT_HOST}
       - MQTT_PORT=${MQTT_PORT:-1883}
       - MQTT_TOPIC=${MQTT_TOPIC:-factorio/chat}
+      - HOST_METRICS_TOPIC=${HOST_METRICS_TOPIC:-factorio/host-metrics}
+      - HOST_METRICS_WINDOW_MINUTES=15
+      - HOST_METRICS_SAMPLE_INTERVAL=5
       - CHAT_LIMIT=50
       - CHAT_HISTORY_PATH=/data/chat_history.json
       - HISTORY_PATH=/data/history.json

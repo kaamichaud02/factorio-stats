@@ -26,10 +26,31 @@ services:
     volumes:
       - ./ship_chat.py:/app/ship_chat.py:ro
       - ./requirements.txt:/app/requirements.txt:ro
-      # <-- Ajuste le chemin source ci-dessous pour pointer vers le vrai
-      # fichier --console-log de ton serveur Factorio (chemin HOST:conteneur)
-      - /opt/factorio/console.log:/factorio-logs/console.log:ro
+      # Chemin confirmé du fichier --console-log sur ce serveur (factorio-comfy)
+      - /opt/factorio-comfy/console.log:/factorio-logs/console.log:ro
       - ./data:/data
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+
+  host-metrics:
+    image: python:3.12-alpine
+    container_name: factorio-host-metrics
+    working_dir: /app
+    command: ["sh", "-c", "pip install --quiet --no-cache-dir -r requirements.txt && python host_metrics.py"]
+    environment:
+      - PROC_PATH=/host/proc
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=1883
+      - HOST_METRICS_TOPIC=${HOST_METRICS_TOPIC:-factorio/host-metrics}
+      - INTERVAL=5
+    volumes:
+      - ./host_metrics.py:/app/host_metrics.py:ro
+      - ./requirements.txt:/app/requirements.txt:ro
+      # /proc de l'HÔTE en lecture seule — nécessaire pour lire les vraies
+      # métriques CPU/RAM/disque de la VM plutôt que celles, potentiellement
+      # limitées, du conteneur.
+      - /proc:/host/proc:ro
     restart: unless-stopped
     depends_on:
       - mosquitto

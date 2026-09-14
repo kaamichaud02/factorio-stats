@@ -39,6 +39,12 @@ OUTPUT_PATH = os.environ.get("OUTPUT_PATH", "/data/stats.json")
 MQTT_HOST = os.environ.get("MQTT_HOST", "")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 MQTT_TOPIC = os.environ.get("MQTT_TOPIC", "factorio/chat")
+HOST_METRICS_TOPIC = os.environ.get("HOST_METRICS_TOPIC", "factorio/host-metrics")
+HOST_METRICS_WINDOW_MINUTES = int(os.environ.get("HOST_METRICS_WINDOW_MINUTES", "15"))
+HOST_METRICS_SAMPLE_INTERVAL = float(os.environ.get("HOST_METRICS_SAMPLE_INTERVAL", "5"))
+HOST_METRICS_MAX_POINTS = max(
+    2, int((HOST_METRICS_WINDOW_MINUTES * 60) // max(HOST_METRICS_SAMPLE_INTERVAL, 1))
+)
 CHAT_LIMIT = int(os.environ.get("CHAT_LIMIT", "50"))
 CHAT_HISTORY_PATH = os.environ.get("CHAT_HISTORY_PATH", "/data/chat_history.json")
 
@@ -170,8 +176,35 @@ LUA_QUERY = (
     "for i=1,math.min(30,#production) do top[i]=production[i] end "
     "local ok6,rockets=pcall(function() return force.rockets_launched end) "
     "if not (ok6 and rockets) then rockets=0 end "
+    # Métriques de charge du jeu — indicateurs de ce qui peut faire chuter
+    # l'UPS (grand nombre d'entités, trains en pathfinding, robots actifs,
+    # réseaux de circuits complexes, constructions en attente).
+    # count_entities_filtered est indexé côté moteur, donc bien plus léger
+    # qu'un find_entities() qui matérialiserait une liste complète.
+    "local total_entities=0 local active_trains=0 local robots=0 "
+    "local circuit_entities=0 local pending_ghosts=0 "
+    "for _,surface in pairs(game.surfaces) do "
+    "local ok7,cnt=pcall(function() return surface.count_entities_filtered{} end) "
+    "if ok7 and cnt then total_entities=total_entities+cnt end "
+    "local ok8,trains=pcall(function() return surface.get_trains() end) "
+    "if ok8 and trains then active_trains=active_trains+#trains end "
+    "local ok9,r1=pcall(function() return surface.count_entities_filtered{type='logistic-robot'} end) "
+    "if ok9 and r1 then robots=robots+r1 end "
+    "local ok10,r2=pcall(function() return surface.count_entities_filtered{type='construction-robot'} end) "
+    "if ok10 and r2 then robots=robots+r2 end "
+    "local ok11,c1=pcall(function() return surface.count_entities_filtered{type='arithmetic-combinator'} end) "
+    "if ok11 and c1 then circuit_entities=circuit_entities+c1 end "
+    "local ok12,c2=pcall(function() return surface.count_entities_filtered{type='decider-combinator'} end) "
+    "if ok12 and c2 then circuit_entities=circuit_entities+c2 end "
+    "local ok13,c3=pcall(function() return surface.count_entities_filtered{type='constant-combinator'} end) "
+    "if ok13 and c3 then circuit_entities=circuit_entities+c3 end "
+    "local ok14,g1=pcall(function() return surface.count_entities_filtered{type='entity-ghost'} end) "
+    "if ok14 and g1 then pending_ghosts=pending_ghosts+g1 end "
+    "end "
     "local data={tick=game.tick,players=players,online_count=#game.connected_players,"
     "rockets_launched=rockets,"
+    "total_entities=total_entities,active_trains=active_trains,robots=robots,"
+    "circuit_entities=circuit_entities,pending_ghosts=pending_ghosts,"
     "research=research,techs_done=techs_done,techs_total=techs_total,"
     "evolution=evolution,electricity_produced=electricity_produced,"
     "electricity_consumed=electricity_consumed,top_production=top} "
@@ -428,6 +461,22 @@ def _save_chat_history():
 # alertes (pas seulement s'abonner au chat) depuis la boucle principale.
 _mqtt_client_ref = {"client": None}
 
+# Dernière valeur + historique fin des métriques hôte (CPU/RAM/I-O),
+# alimentées par le service host-metrics via MQTT.
+_host_metrics_lock = threading.Lock()
+_latest_host_metrics = {}
+_host_metrics_history = deque(maxlen=HOST_METRICS_MAX_POINTS)
+
+
+def get_latest_host_metrics():
+    with _host_metrics_lock:
+        return dict(_latest_host_metrics) if _latest_host_metrics else None
+
+
+def get_host_metrics_history():
+    with _host_metrics_lock:
+        return list(_host_metrics_history)
+
 
 def publish_mqtt_alert(topic_suffix, payload):
     client = _mqtt_client_ref.get("client")
@@ -444,6 +493,14 @@ def _on_mqtt_message(client, userdata, msg):
         payload = json.loads(msg.payload.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError):
         return
+
+    if msg.topic == HOST_METRICS_TOPIC:
+        with _host_metrics_lock:
+            _latest_host_metrics.clear()
+            _latest_host_metrics.update(payload)
+            _host_metrics_history.append(payload)
+        return
+
     with _chat_lock:
         _chat_buffer.append(payload)
     _save_chat_history()
@@ -472,8 +529,13 @@ def start_mqtt_subscriber():
 
         def _on_connect(c, userdata, flags, rc):
             c.subscribe(MQTT_TOPIC, qos=1)
+            c.subscribe(HOST_METRICS_TOPIC, qos=0)
             _mqtt_client_ref["client"] = c
-            print(f"[poller] Abonné à MQTT {MQTT_HOST}:{MQTT_PORT} topic={MQTT_TOPIC}", flush=True)
+            print(
+                f"[poller] Abonné à MQTT {MQTT_HOST}:{MQTT_PORT} "
+                f"topics={MQTT_TOPIC},{HOST_METRICS_TOPIC}",
+                flush=True,
+            )
 
         client.on_connect = _on_connect
 
@@ -587,12 +649,14 @@ def poll_once():
     set_online_players(p.get("name") for p in data["players"])
 
     data["chat_messages"] = get_chat_messages()
-    data["ups_samples"] = get_ups_samples()
-    data["current_ups"] = data["ups_samples"][-1]["ups"] if data["ups_samples"] else None
 
     ups_samples = get_ups_samples()
     data["ups_samples"] = ups_samples
     data["current_ups"] = ups_samples[-1]["ups"] if ups_samples else None
+
+    data["host_metrics"] = get_latest_host_metrics()
+    data["host_metrics_history"] = get_host_metrics_history()
+
     maybe_record_history(data)
     data["history"] = get_history()
 

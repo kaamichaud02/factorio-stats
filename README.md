@@ -168,6 +168,24 @@ Configure `ACTION_TOKEN` (et optionnellement `ACTION_MAX_COUNT`, défaut
 "Jeton" du formulaire sur le dashboard (gardé en mémoire de session dans
 le navigateur, jamais transmis ailleurs qu'à ce serveur).
 
+## 9. Onglet Performance (UPS, métriques jeu, ressources hôte)
+
+Le dashboard a un onglet "⚡ Performance" (barre latérale gauche) avec
+trois sections :
+
+- **UPS en temps quasi réel** : un thread séparé du poller échantillonne
+  `game.tick` toutes les 5s (indépendant du cycle principal de 15s) pour
+  capter les micro-chutes de performance. Aucune config nécessaire.
+- **Métriques du jeu** (entités totales, trains actifs, robots, circuits,
+  constructions en attente) : via RCON, aucune config nécessaire.
+- **Ressources serveur (CPU/RAM/charge/I-O disque)** : RCON ne peut PAS
+  fournir ces données (API Lua en bac à sable, sans accès au système). Il
+  faut déployer le service `host-metrics` (inclus dans le stack
+  `log-shipper/`, déjà présent si tu as suivi la section 5) — il lit
+  `/proc` de l'hôte et publie sur MQTT, topic `factorio/host-metrics`.
+  Si ce service n'est pas déployé, cette section affiche simplement
+  "Aucune donnée" sans casser le reste du dashboard.
+
 ## Notes
 
 - Le poller interroge le serveur toutes les 15 secondes (modifiable via
