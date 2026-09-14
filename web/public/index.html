@@ -482,6 +482,13 @@ function formatWatts(w) {
   return Math.round(w) + ' W';
 }
 
+function formatTimeLabel(isoString) {
+  if (!isoString) return '';
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' });
+}
+
 function formatDuration(totalSeconds) {
   const s = Math.round(totalSeconds);
   const h = Math.floor(s / 3600);
@@ -491,11 +498,19 @@ function formatDuration(totalSeconds) {
   return `${m}m${String(sec).padStart(2, '0')}s`;
 }
 
-function drawSparkline(svgId, values, color) {
+function drawSparkline(svgId, values, color, opts) {
+  opts = opts || {};
+  const formatValue = opts.formatValue || (v => v.toFixed(1));
+  const labels = opts.labels || null; // même longueur que values, ou null
+
   const svg = document.getElementById(svgId);
   const viewBox = (svg.getAttribute('viewBox') || '0 0 260 70').split(' ').map(Number);
-  const w = viewBox[2], h = viewBox[3], pad = 4;
+  const w = viewBox[2], h = viewBox[3];
+  const padLeft = 38, padRight = 6, padTop = 8, padBottom = 6;
   svg.innerHTML = '';
+  svg.onmousemove = null;
+  svg.onmouseleave = null;
+
   if (!values || values.length < 2) {
     const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     text.setAttribute('x', w / 2);
@@ -507,16 +522,44 @@ function drawSparkline(svgId, values, color) {
     svg.appendChild(text);
     return;
   }
+
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
-  const stepX = (w - pad * 2) / (values.length - 1);
-  const points = values.map((v, i) => {
-    const x = pad + i * stepX;
-    const y = h - pad - ((v - min) / range) * (h - pad * 2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  const plotW = w - padLeft - padRight;
+  const plotH = h - padTop - padBottom;
+  const stepX = plotW / (values.length - 1);
+
+  const xAt = i => padLeft + i * stepX;
+  const yAt = v => padTop + plotH - ((v - min) / range) * plotH;
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+
+  // Lignes de grille + labels d'échelle Y (max en haut, min en bas)
+  [max, min].forEach(v => {
+    const y = yAt(v);
+    const gridLine = document.createElementNS(svgNS, 'line');
+    gridLine.setAttribute('x1', padLeft);
+    gridLine.setAttribute('x2', w - padRight);
+    gridLine.setAttribute('y1', y);
+    gridLine.setAttribute('y2', y);
+    gridLine.setAttribute('stroke', 'var(--panel-border)');
+    gridLine.setAttribute('stroke-width', '1');
+    gridLine.setAttribute('stroke-dasharray', '2,2');
+    svg.appendChild(gridLine);
+
+    const label = document.createElementNS(svgNS, 'text');
+    label.setAttribute('x', padLeft - 6);
+    label.setAttribute('y', y + 3);
+    label.setAttribute('text-anchor', 'end');
+    label.setAttribute('fill', 'var(--text-dim2)');
+    label.setAttribute('font-size', '9');
+    label.textContent = formatValue(v);
+    svg.appendChild(label);
   });
-  const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+
+  const points = values.map((v, i) => `${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`);
+  const polyline = document.createElementNS(svgNS, 'polyline');
   polyline.setAttribute('points', points.join(' '));
   polyline.setAttribute('fill', 'none');
   polyline.setAttribute('stroke', color);
@@ -525,13 +568,82 @@ function drawSparkline(svgId, values, color) {
   polyline.setAttribute('stroke-linecap', 'round');
   svg.appendChild(polyline);
 
-  const [lastX, lastY] = points[points.length - 1].split(',');
-  const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-  dot.setAttribute('cx', lastX);
-  dot.setAttribute('cy', lastY);
+  const dot = document.createElementNS(svgNS, 'circle');
+  dot.setAttribute('cx', xAt(values.length - 1));
+  dot.setAttribute('cy', yAt(values[values.length - 1]));
   dot.setAttribute('r', '3');
   dot.setAttribute('fill', color);
   svg.appendChild(dot);
+
+  // --- Survol souris : ligne repère + point + info-bulle ---
+  const hoverGroup = document.createElementNS(svgNS, 'g');
+  hoverGroup.style.display = 'none';
+
+  const hoverLine = document.createElementNS(svgNS, 'line');
+  hoverLine.setAttribute('y1', padTop);
+  hoverLine.setAttribute('y2', h - padBottom);
+  hoverLine.setAttribute('stroke', 'var(--text-dim2)');
+  hoverLine.setAttribute('stroke-width', '1');
+  hoverGroup.appendChild(hoverLine);
+
+  const hoverDot = document.createElementNS(svgNS, 'circle');
+  hoverDot.setAttribute('r', '4');
+  hoverDot.setAttribute('fill', color);
+  hoverDot.setAttribute('stroke', 'var(--panel)');
+  hoverDot.setAttribute('stroke-width', '1.5');
+  hoverGroup.appendChild(hoverDot);
+
+  const tooltipBg = document.createElementNS(svgNS, 'rect');
+  tooltipBg.setAttribute('rx', '4');
+  tooltipBg.setAttribute('fill', 'var(--panel)');
+  tooltipBg.setAttribute('stroke', 'var(--panel-border)');
+  hoverGroup.appendChild(tooltipBg);
+
+  const tooltipText = document.createElementNS(svgNS, 'text');
+  tooltipText.setAttribute('font-size', '10');
+  tooltipText.setAttribute('fill', 'var(--text)');
+  hoverGroup.appendChild(tooltipText);
+
+  svg.appendChild(hoverGroup);
+
+  svg.addEventListener('mousemove', (evt) => {
+    const rect = svg.getBoundingClientRect();
+    const scaleX = w / rect.width;
+    const mouseX = (evt.clientX - rect.left) * scaleX;
+    let idx = Math.round((mouseX - padLeft) / stepX);
+    idx = Math.max(0, Math.min(values.length - 1, idx));
+
+    const x = xAt(idx);
+    const y = yAt(values[idx]);
+    hoverLine.setAttribute('x1', x);
+    hoverLine.setAttribute('x2', x);
+    hoverDot.setAttribute('cx', x);
+    hoverDot.setAttribute('cy', y);
+
+    const valueText = formatValue(values[idx]);
+    const labelText = labels && labels[idx] ? labels[idx] : '';
+    const fullText = labelText ? `${valueText} — ${labelText}` : valueText;
+    tooltipText.textContent = fullText;
+
+    // Largeur approximative du texte pour dimensionner le fond
+    const textWidth = fullText.length * 5.2 + 10;
+    let boxX = x + 8;
+    if (boxX + textWidth > w - padRight) boxX = x - textWidth - 8;
+    const boxY = Math.max(padTop, y - 20);
+
+    tooltipBg.setAttribute('x', boxX);
+    tooltipBg.setAttribute('y', boxY);
+    tooltipBg.setAttribute('width', textWidth);
+    tooltipBg.setAttribute('height', 16);
+    tooltipText.setAttribute('x', boxX + 5);
+    tooltipText.setAttribute('y', boxY + 11);
+
+    hoverGroup.style.display = 'block';
+  });
+
+  svg.addEventListener('mouseleave', () => {
+    hoverGroup.style.display = 'none';
+  });
 }
 
 function linkifyMessage(message) {
@@ -667,10 +779,20 @@ function render(data) {
   const playerValues = history.map(p => p.online_count ?? 0);
   const evolutionValues = history.map(p => (p.evolution ?? 0) * 100);
   const productionValues = history.map(p => p.production_total ?? 0);
+  const historyLabels = history.map(p => formatTimeLabel(p.ts));
 
-  drawSparkline('chartPlayers', playerValues, 'var(--accent)');
-  drawSparkline('chartEvolution', evolutionValues, 'var(--red)');
-  drawSparkline('chartProduction', productionValues, 'var(--green)');
+  drawSparkline('chartPlayers', playerValues, 'var(--accent)', {
+    formatValue: v => Math.round(v).toString(),
+    labels: historyLabels,
+  });
+  drawSparkline('chartEvolution', evolutionValues, 'var(--red)', {
+    formatValue: v => v.toFixed(1) + '%',
+    labels: historyLabels,
+  });
+  drawSparkline('chartProduction', productionValues, 'var(--green)', {
+    formatValue: v => Math.round(v).toLocaleString('fr-CA'),
+    labels: historyLabels,
+  });
 
   document.getElementById('chartPlayersCurrent').textContent =
     playerValues.length ? playerValues[playerValues.length - 1] : '–';
@@ -681,7 +803,9 @@ function render(data) {
 
   // Production scientifique
   const sci = data.science_progress || {};
-  drawSparkline('chartScience', sci.rate_history || [], 'var(--accent)');
+  drawSparkline('chartScience', sci.rate_history || [], 'var(--accent)', {
+    formatValue: v => v.toFixed(1) + '/min',
+  });
   document.getElementById('scienceProgress').textContent =
     (sci.absolute != null && sci.total != null)
       ? `${sci.absolute.toLocaleString('fr-CA')} / ${sci.total.toLocaleString('fr-CA')}`
@@ -696,7 +820,11 @@ function render(data) {
     data.current_ups != null ? data.current_ups.toFixed(1) : '–';
   const upsSamples = Array.isArray(data.ups_samples) ? data.ups_samples : [];
   const upsValues = upsSamples.map(s => s.ups);
-  drawSparkline('chartUps', upsValues, 'var(--green)');
+  const upsLabels = upsSamples.map(s => formatTimeLabel(s.ts));
+  drawSparkline('chartUps', upsValues, 'var(--green)', {
+    formatValue: v => v.toFixed(1) + ' UPS',
+    labels: upsLabels,
+  });
   if (upsValues.length > 0) {
     const avg = upsValues.reduce((a, b) => a + b, 0) / upsValues.length;
     document.getElementById('upsAverage').textContent = avg.toFixed(1);
@@ -742,8 +870,13 @@ function render(data) {
       hm.disk_write_kbps != null ? formatKbps(hm.disk_write_kbps) : '–';
 
     const hmHistory = Array.isArray(data.host_metrics_history) ? data.host_metrics_history : [];
-    const cpuValues = hmHistory.map(h => h.cpu_percent).filter(v => v != null);
-    drawSparkline('chartCpu', cpuValues, 'var(--red)');
+    const cpuPairs = hmHistory
+      .filter(h => h.cpu_percent != null)
+      .map(h => ({ value: h.cpu_percent, label: formatTimeLabel(h.ts) }));
+    drawSparkline('chartCpu', cpuPairs.map(p => p.value), 'var(--red)', {
+      formatValue: v => v.toFixed(1) + ' %',
+      labels: cpuPairs.map(p => p.label),
+    });
   }
 }
 
