@@ -56,6 +56,16 @@ HISTORY_MAX_POINTS = int(os.environ.get("HISTORY_MAX_POINTS", "288"))
 SCIENCE_RATE_WINDOW_MINUTES = int(os.environ.get("SCIENCE_RATE_WINDOW_MINUTES", "10"))
 SCIENCE_RATE_MAX_POINTS = max(2, (SCIENCE_RATE_WINDOW_MINUTES * 60) // max(POLL_INTERVAL, 1))
 
+# Échantillonnage UPS (updates per second) — thread séparé, indépendant du
+# cycle principal de sondage (POLL_INTERVAL), pour capter les micro-chutes
+# de performance qu'un cycle de 15s pourrait manquer. On interroge juste
+# game.tick (requête très légère) toutes les UPS_SAMPLE_INTERVAL secondes
+# et on calcule un UPS glissant à partir du delta de ticks / delta de
+# temps réel entre deux échantillons.
+UPS_SAMPLE_INTERVAL = float(os.environ.get("UPS_SAMPLE_INTERVAL", "5"))
+UPS_WINDOW_MINUTES = int(os.environ.get("UPS_WINDOW_MINUTES", "15"))
+UPS_MAX_POINTS = max(2, int((UPS_WINDOW_MINUTES * 60) // max(UPS_SAMPLE_INTERVAL, 1)))
+
 # Notifications Telegram (optionnel) — envoyées quand TELEGRAM_BOT_TOKEN et
 # TELEGRAM_CHAT_ID sont configurés. Couvre : recherche terminée, fusée/
 # satellite lancé (détectés via RCON) et join/leave (reçus via MQTT).
@@ -577,6 +587,12 @@ def poll_once():
     set_online_players(p.get("name") for p in data["players"])
 
     data["chat_messages"] = get_chat_messages()
+    data["ups_samples"] = get_ups_samples()
+    data["current_ups"] = data["ups_samples"][-1]["ups"] if data["ups_samples"] else None
+
+    ups_samples = get_ups_samples()
+    data["ups_samples"] = ups_samples
+    data["current_ups"] = ups_samples[-1]["ups"] if ups_samples else None
     maybe_record_history(data)
     data["history"] = get_history()
 
@@ -714,12 +730,61 @@ def poll_once():
     return data
 
 
+# --- Échantillonnage UPS (thread indépendant) --------------------------
+_ups_lock = threading.Lock()
+_ups_samples = deque(maxlen=UPS_MAX_POINTS)
+_last_tick_sample = {"tick": None, "ts": None}
+
+
+def _sample_tick():
+    body = rcon_command("/silent-command rcon.print(game.tick)")
+    return int(body.strip())
+
+
+def _ups_sampler_loop():
+    global _last_tick_sample
+    while True:
+        try:
+            tick = _sample_tick()
+            now = time.time()
+            prev = _last_tick_sample
+            if prev["tick"] is not None and prev["ts"] is not None and tick > prev["tick"]:
+                dt = now - prev["ts"]
+                if dt > 0:
+                    ups = (tick - prev["tick"]) / dt
+                    # Clamp : évite les valeurs négatives (glitch d'horloge)
+                    # ou absurdement hautes (redémarrage du serveur, saut
+                    # de tick) tout en laissant passer les vraies chutes
+                    # de performance (UPS < 60).
+                    ups = max(0.0, min(ups, 120.0))
+                    with _ups_lock:
+                        _ups_samples.append({
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                            "ups": round(ups, 2),
+                        })
+            _last_tick_sample = {"tick": tick, "ts": now}
+        except Exception as e:
+            print(f"[poller] Erreur échantillon UPS : {e}", file=sys.stderr, flush=True)
+        time.sleep(UPS_SAMPLE_INTERVAL)
+
+
+def start_ups_sampler():
+    t = threading.Thread(target=_ups_sampler_loop, daemon=True)
+    t.start()
+
+
+def get_ups_samples():
+    with _ups_lock:
+        return list(_ups_samples)
+
+
 def main():
     print(f"[poller] Démarrage — RCON {RCON_HOST}:{RCON_PORT}, intervalle {POLL_INTERVAL}s", flush=True)
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 
     start_mqtt_subscriber()
     start_action_server()
+    start_ups_sampler()
     _load_history()
 
     while True:
