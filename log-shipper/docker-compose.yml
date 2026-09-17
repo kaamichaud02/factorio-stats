@@ -26,8 +26,9 @@ services:
     volumes:
       - ./ship_chat.py:/app/ship_chat.py:ro
       - ./requirements.txt:/app/requirements.txt:ro
-      # Chemin confirmé du fichier --console-log sur ce serveur (factorio-comfy)
-      - /opt/factorio-comfy/console.log:/factorio-logs/console.log:ro
+      # Chemin confirmé du fichier --console-log — serveur danger-ore-omnimatter-maze
+      # (bascule depuis factorio-comfy)
+      - /opt/factorio-danger-ore/console.log:/factorio-logs/console.log:ro
       - ./data:/data
     restart: unless-stopped
     depends_on:
